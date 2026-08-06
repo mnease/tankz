@@ -1055,16 +1055,26 @@ function MenuContent({
     const sim = hud.playMode === "sim";
     return (
       <div className="max-h-[min(88dvh,820px)] space-y-4 overflow-y-auto pr-0.5">
-        <div className="space-y-2">
+        <div className="space-y-3">
           <p className="text-[11px] font-medium tracking-[0.22em] text-accent uppercase">
             Armor Division
           </p>
-          <h1
-            id="tankz-menu-title"
-            className="text-4xl font-semibold tracking-tight sm:text-5xl"
-          >
-            Tankz
-          </h1>
+          <div className="flex items-center gap-3 sm:gap-4">
+            <img
+              src="/brand/tankz-icon.svg"
+              alt=""
+              width={56}
+              height={56}
+              className="h-12 w-12 shrink-0 sm:h-14 sm:w-14"
+              aria-hidden="true"
+            />
+            <h1
+              id="tankz-menu-title"
+              className="text-4xl font-semibold tracking-tight sm:text-5xl"
+            >
+              Tankz
+            </h1>
+          </div>
           <p className="max-w-sm text-sm leading-relaxed text-muted">
             {sim
               ? "Tank-relative drive, limited magazines, and manual reloads. Heavier, deliberate combat."

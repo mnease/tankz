@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "og:make": "node scripts/make-og.mjs"
+    "og:make": "node scripts/make-og.mjs",
+    "logo:make": "node scripts/make-logo.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.3",

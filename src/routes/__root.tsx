@@ -42,7 +42,11 @@ export const Route = createRootRoute({
       { name: "twitter:description", content: APP_DESCRIPTION },
       { name: "twitter:image", content: OG_IMAGE },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      { rel: "icon", href: "/favicon.png", type: "image/png" },
+      { rel: "apple-touch-icon", href: "/brand/tankz-logo.png" },
+    ],
   }),
   component: () => (
     <html lang="en" suppressHydrationWarning>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Tankz">
+  <defs>
+    <linearGradient id="hull" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2a3140"/>
+      <stop offset="100%" stop-color="#12161f"/>
+    </linearGradient>
+    <linearGradient id="barrel" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#5eead4"/>
+      <stop offset="100%" stop-color="#2dd4bf"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="64" cy="102" rx="36" ry="6" fill="#000" opacity="0.35"/>
+  <rect x="28" y="78" width="72" height="14" rx="7" fill="#0c0e12" stroke="#2a2f3a" stroke-width="2"/>
+  <circle cx="40" cy="85" r="3.5" fill="#5eead4" opacity="0.55"/>
+  <circle cx="56" cy="85" r="3.5" fill="#5eead4" opacity="0.35"/>
+  <circle cx="72" cy="85" r="3.5" fill="#5eead4" opacity="0.35"/>
+  <circle cx="88" cy="85" r="3.5" fill="#5eead4" opacity="0.55"/>
+  <rect x="34" y="52" width="60" height="32" rx="10" fill="url(#hull)" stroke="#5eead4" stroke-width="2.5" stroke-opacity="0.55"/>
+  <rect x="42" y="60" width="44" height="5" rx="2.5" fill="#5eead4" opacity="0.35"/>
+  <circle cx="64" cy="58" r="14" fill="#151922" stroke="#5eead4" stroke-width="2.5" stroke-opacity="0.7"/>
+  <circle cx="64" cy="58" r="5" fill="#5eead4" opacity="0.85"/>
+  <rect x="74" y="54" width="36" height="8" rx="4" fill="url(#barrel)" transform="rotate(-18 74 58)"/>
+  <circle cx="108" cy="47" r="3" fill="#5eead4"/>
+</svg>
