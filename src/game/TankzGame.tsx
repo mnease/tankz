@@ -396,71 +396,105 @@ export function TankzGame() {
 
       {showMenu && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-bg/55 p-4 backdrop-blur-[2px]">
-          <div
-            className={`flex w-full flex-col gap-3 ${
-              phase === "upgrade" || phase === "enterName"
-                ? "max-w-2xl"
-                : "max-w-md"
-            }`}
-          >
-            <div
-              className="rounded-xl border border-border bg-surface/95 p-6 shadow-[0_24px_80px_rgba(0,0,0,0.45)] sm:p-8"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="tankz-menu-title"
-            >
-              <MenuContent
-                phase={phase}
-                hud={hud}
-                onPrimary={primary}
-                onPickUpgrade={pickUpgrade}
-                onSetAimMode={setAimMode}
-                onSubmitName={submitName}
-                onNameCycle={nameCycle}
-                onNameCursor={nameCursorMove}
-                onNameType={nameType}
-              />
-            </div>
-
-            {(phase === "title" ||
+          {(() => {
+            const sideHof =
+              phase === "title" ||
               phase === "gameover" ||
-              phase === "victory") && (
-              <footer
-                className="flex flex-col gap-2 px-1"
-                aria-label="Credits and support"
+              phase === "victory";
+            const wide =
+              phase === "upgrade" || phase === "enterName" || sideHof;
+            return (
+              <div
+                className={`flex w-full flex-col gap-3 ${
+                  wide ? "max-w-3xl lg:max-w-4xl" : "max-w-md"
+                }`}
               >
-                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                  <div className="min-w-0 flex-1 sm:flex-none">
-                    <TipTheMaker />
+                <div
+                  className={
+                    sideHof
+                      ? "grid grid-cols-1 items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] md:gap-4"
+                      : "contents"
+                  }
+                >
+                  <div
+                    className="rounded-xl border border-border bg-surface/95 p-6 shadow-[0_24px_80px_rgba(0,0,0,0.45)] sm:p-8"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="tankz-menu-title"
+                  >
+                    <MenuContent
+                      phase={phase}
+                      hud={hud}
+                      onPrimary={primary}
+                      onPickUpgrade={pickUpgrade}
+                      onSetAimMode={setAimMode}
+                      onSubmitName={submitName}
+                      onNameCycle={nameCycle}
+                      onNameCursor={nameCursorMove}
+                      onNameType={nameType}
+                      showInlineLeaderboard={false}
+                    />
                   </div>
-                  <div className="flex flex-col items-end gap-1.5">
-                    <p className="shrink-0 text-[11px] text-subtle">
-                      <span className="sr-only">Copyright </span>©{" "}
-                      {new Date().getFullYear()} NeaseMedia
-                    </p>
-                    <div className="flex items-center gap-2 text-[11px] text-subtle">
-                      <span
-                        className="font-mono tabular-nums tracking-wide text-muted"
-                        aria-label={`Game version ${GAME_VERSION}`}
-                      >
-                        v{GAME_VERSION}
-                      </span>
-                      <a
-                        href={GAME_GITHUB_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-surface-2/80 text-muted transition-colors hover:border-border hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                        aria-label="Tankz on GitHub, opens in a new tab"
-                        title="View on GitHub"
-                      >
-                        <GitHubIcon />
-                      </a>
-                    </div>
-                  </div>
+
+                  {sideHof && (
+                    <aside
+                      className="flex min-h-0 flex-col rounded-xl border border-border bg-surface/95 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.45)] sm:p-6"
+                      aria-label="Hall of Fame"
+                    >
+                      <HallOfFamePanel
+                        hud={hud}
+                        highlight={
+                          (phase === "gameover" || phase === "victory") &&
+                          hud.nameRank
+                            ? { name: hud.nameDraft, score: hud.score }
+                            : null
+                        }
+                      />
+                    </aside>
+                  )}
                 </div>
-              </footer>
-            )}
-          </div>
+
+                {(phase === "title" ||
+                  phase === "gameover" ||
+                  phase === "victory") && (
+                  <footer
+                    className="flex flex-col gap-2 px-1"
+                    aria-label="Credits and support"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                      <div className="min-w-0 flex-1 sm:flex-none">
+                        <TipTheMaker />
+                      </div>
+                      <div className="flex flex-col items-end gap-1.5">
+                        <p className="shrink-0 text-[11px] text-subtle">
+                          <span className="sr-only">Copyright </span>©{" "}
+                          {new Date().getFullYear()} NeaseMedia
+                        </p>
+                        <div className="flex items-center gap-2 text-[11px] text-subtle">
+                          <span
+                            className="font-mono tabular-nums tracking-wide text-muted"
+                            aria-label={`Game version ${GAME_VERSION}`}
+                          >
+                            v{GAME_VERSION}
+                          </span>
+                          <a
+                            href={GAME_GITHUB_URL}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-surface-2/80 text-muted transition-colors hover:border-border hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                            aria-label="Tankz on GitHub, opens in a new tab"
+                            title="View on GitHub"
+                          >
+                            <GitHubIcon />
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  </footer>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -596,6 +630,46 @@ function HealthPips({ health, max }: { health: number; max: number }) {
           {health}/{max}
         </span>
       )}
+    </div>
+  );
+}
+
+function HallOfFamePanel({
+  hud,
+  highlight,
+}: {
+  hud: HudSnapshot;
+  highlight?: { name: string; score: number } | null;
+}) {
+  return (
+    <div className="flex h-full min-h-[12rem] flex-col">
+      <div className="mb-3 border-b border-border/60 pb-3">
+        <p className="text-[11px] font-medium tracking-[0.2em] text-accent uppercase">
+          Hall of Fame
+        </p>
+        <p className="mt-1 text-[11px] text-muted">
+          {hud.boardSynced ? "Global · all players" : "Loading ranks…"}
+        </p>
+        {hud.highScore > 0 && (
+          <p className="mt-2 font-mono text-xs tabular-nums text-fg/90">
+            Best{" "}
+            <span className="font-semibold text-fg">
+              {hud.highScore.toLocaleString()}
+            </span>
+          </p>
+        )}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
+        {hud.leaderboard.length > 0 ? (
+          <Leaderboard entries={hud.leaderboard} highlight={highlight} />
+        ) : (
+          <p className="py-6 text-center text-xs leading-relaxed text-muted">
+            {hud.boardSynced
+              ? "No scores yet. Clear waves and claim the top spot."
+              : "Syncing leaderboard…"}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -838,6 +912,7 @@ function MenuContent({
   onNameCycle,
   onNameCursor,
   onNameType,
+  showInlineLeaderboard = true,
 }: {
   phase: GamePhase;
   hud: HudSnapshot;
@@ -848,6 +923,8 @@ function MenuContent({
   onNameCycle: (d: number) => void;
   onNameCursor: (d: number) => void;
   onNameType: (ch: string) => void;
+  /** When false, HoF is rendered as a sibling column by the shell. */
+  showInlineLeaderboard?: boolean;
 }) {
   if (phase === "title") {
     return (
@@ -876,7 +953,7 @@ function MenuContent({
           <Hint k="Tab" v="Auto-target" />
           <Hint k="M" v="Aim mode" />
         </div>
-        {hud.leaderboard.length > 0 && (
+        {showInlineLeaderboard && hud.leaderboard.length > 0 && (
           <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">
             <p className="mb-2 text-center text-[10px] font-medium tracking-[0.18em] text-muted uppercase">
               Hall of Fame{hud.boardSynced ? " · Global" : ""}
@@ -1013,7 +1090,7 @@ function MenuContent({
             Final score {hud.score.toLocaleString()}
           </p>
         </div>
-        {hud.leaderboard.length > 0 && (
+        {showInlineLeaderboard && hud.leaderboard.length > 0 && (
           <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">
             <p className="mb-2 text-center text-[10px] font-medium tracking-[0.18em] text-muted uppercase">
               Hall of Fame{hud.boardSynced ? " · Global" : ""}
@@ -1056,7 +1133,7 @@ function MenuContent({
           Score {hud.score.toLocaleString()}
         </p>
       </div>
-      {hud.leaderboard.length > 0 && (
+      {showInlineLeaderboard && hud.leaderboard.length > 0 && (
         <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">
           <p className="mb-2 text-center text-[10px] font-medium tracking-[0.18em] text-muted uppercase">
             Hall of Fame{hud.boardSynced ? " · Global" : ""}
