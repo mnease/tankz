@@ -1064,8 +1064,8 @@ function MenuContent({
             <img
               src="/brand/tankz-icon.svg"
               alt=""
-              width={72}
-              height={54}
+              width={98}
+              height={56}
               className="h-full w-auto shrink-0 object-contain object-left"
               aria-hidden="true"
             />
