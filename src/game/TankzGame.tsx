@@ -1059,18 +1059,19 @@ function MenuContent({
           <p className="text-[11px] font-medium tracking-[0.22em] text-accent uppercase">
             Armor Division
           </p>
-          <div className="flex items-center gap-2.5 sm:gap-3">
+          {/* Shared row height: icon (cropped SVG) + wordmark cap height match */}
+          <div className="flex h-11 items-center gap-3 sm:h-14 sm:gap-3.5">
             <img
               src="/brand/tankz-icon.svg"
               alt=""
-              width={48}
-              height={48}
-              className="h-[2.25rem] w-[2.25rem] shrink-0 object-contain sm:h-[3rem] sm:w-[3rem]"
+              width={72}
+              height={54}
+              className="h-full w-auto shrink-0 object-contain object-left"
               aria-hidden="true"
             />
             <h1
               id="tankz-menu-title"
-              className="text-4xl leading-none font-semibold tracking-tight sm:text-5xl"
+              className="text-[2.75rem] leading-none font-semibold tracking-tight sm:text-[3.5rem]"
             >
               Tankz
             </h1>

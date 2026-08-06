@@ -11,8 +11,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const brand = join(root, "public/brand");
 mkdirSync(brand, { recursive: true });
 
+// Tight crop so the tank fills the frame (matches wordmark height in UI)
 const svgIcon = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Tankz">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="22 40 96 72" width="128" height="96" role="img" aria-label="Tankz">
   <defs>
     <linearGradient id="hull" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#2a3140"/>
