@@ -141,6 +141,14 @@ interface Tank {
   aiWantFire: boolean;
   /** Desired hull heading for AI (radians) */
   aiHeading: number;
+  /** Preferred wall-slide side (−1 left / +1 right) */
+  aiSide: number;
+  /** Accumulated stuck time */
+  aiStuck: number;
+  aiLastX: number;
+  aiLastY: number;
+  /** Seconds remaining in forced unstick maneuver */
+  aiUnstick: number;
   track: number;
   maxMove?: number;
 }
@@ -1051,6 +1059,11 @@ export class TankzEngine {
       aiThrottle: 0,
       aiWantFire: false,
       aiHeading: angle,
+      aiSide: Math.random() > 0.5 ? 1 : -1,
+      aiStuck: 0,
+      aiLastX: x,
+      aiLastY: y,
+      aiUnstick: 0,
       track: 0,
     };
   }
@@ -1097,16 +1110,7 @@ export class TankzEngine {
     if (p.invuln > 0) p.invuln -= dt;
     if (p.fireCd > 0) p.fireCd -= dt;
 
-    // ── Hull steer (body) — A/D, touch L/R ──
-    let hullSteer = 0;
-    if (this.injectSteer != null) {
-      hullSteer = this.injectSteer;
-    } else {
-      if (this.keys.has("KeyA") || this.touch.left) hullSteer += 1;
-      if (this.keys.has("KeyD") || this.touch.right) hullSteer -= 1;
-    }
-
-    // ── Turret aim — mouse, ←/→, Q/E, touch aim L/R ──
+    // ── Turret aim input ──
     let turretSteer = 0;
     if (this.injectTurret != null) {
       turretSteer = this.injectTurret;
@@ -1127,36 +1131,101 @@ export class TankzEngine {
       }
     }
 
-    let throttle = 0;
-    if (this.injectThrottle != null) {
-      throttle = this.injectThrottle;
-    } else {
-      if (this.keys.has("KeyW") || this.keys.has("ArrowUp") || this.touch.up) {
-        throttle += 1;
-      }
-      if (
-        this.keys.has("KeyS") ||
-        this.keys.has("ArrowDown") ||
-        this.touch.down
-      ) {
-        throttle -= 1;
-      }
-    }
-
-    // Hull turn — tracked vehicle: better pivot when slow, scrub speed when turning hard
-    const hullTurnRate = this.run.hullTurn;
     const maxSpeed = this.run.maxSpeed;
-    const speedRatio = Math.min(1, Math.abs(p.speed) / Math.max(40, maxSpeed));
-    // Rest/pivot ≈ full rate; high speed ≈ tighter radius (less turn)
-    const turnMul = 1.2 - 0.65 * speedRatio;
-    // Tracks yaw the same way regardless of forward/reverse (neutral steer feel)
-    p.hullAngle = wrapAngle(
-      p.hullAngle + hullSteer * hullTurnRate * turnMul * dt,
-    );
+    const hullTurnRate = this.run.hullTurn;
+    const accel = this.run.accel;
 
-    // Track scrub: hard turn bleeds speed
-    if (Math.abs(hullSteer) > 0.4 && Math.abs(p.speed) > 35) {
-      p.speed *= Math.exp(-1.35 * Math.abs(hullSteer) * dt);
+    // Inject path keeps tank-relative controls for QA probes
+    const useInject =
+      this.injectSteer != null || this.injectThrottle != null;
+
+    if (useInject) {
+      const hullSteer = this.injectSteer ?? 0;
+      const throttle = this.injectThrottle ?? 0;
+      const speedRatio = Math.min(1, Math.abs(p.speed) / Math.max(40, maxSpeed));
+      const turnMul = 1.2 - 0.65 * speedRatio;
+      p.hullAngle = wrapAngle(
+        p.hullAngle + hullSteer * hullTurnRate * turnMul * dt,
+      );
+      if (Math.abs(hullSteer) > 0.4 && Math.abs(p.speed) > 35) {
+        p.speed *= Math.exp(-1.35 * Math.abs(hullSteer) * dt);
+      }
+      const reverseMax = maxSpeed * 0.42;
+      if (throttle > 0) p.speed += throttle * accel * dt;
+      else if (throttle < 0) p.speed += throttle * accel * 0.62 * dt;
+      else {
+        p.speed *= Math.exp(-3.6 * dt);
+        if (Math.abs(p.speed) < 5) p.speed = 0;
+      }
+      p.speed = clamp(p.speed, -reverseMax, maxSpeed);
+      this.moveTank(p, dt);
+      this.spawnTrackDust(p, hullSteer, dt);
+    } else {
+      // ── Screen-relative drive (natural WASD) ──
+      // W/↑ = up on screen (−Y), S/↓ = down (+Y), A/← = left (−X), D/→ = right (+X)
+      // Hull auto-faces the push direction so "forward" always matches the keys.
+      let ix = 0;
+      let iy = 0;
+      if (this.keys.has("KeyA") || this.touch.left) ix -= 1;
+      if (this.keys.has("KeyD") || this.touch.right) ix += 1;
+      if (this.keys.has("KeyW") || this.touch.up) iy -= 1;
+      if (this.keys.has("KeyS") || this.touch.down) iy += 1;
+      // Arrow keys reserved for aim in keys mode; still allow arrows for move
+      // only when not in keys-aim mode so arrows don't double-duty badly
+      if (this.aimMode !== "keys") {
+        if (this.keys.has("ArrowLeft")) ix -= 1;
+        if (this.keys.has("ArrowRight")) ix += 1;
+        if (this.keys.has("ArrowUp")) iy -= 1;
+        if (this.keys.has("ArrowDown")) iy += 1;
+      }
+
+      const len = Math.hypot(ix, iy);
+      let wantMove = false;
+      let desiredHeading = p.hullAngle;
+      if (len > 0.001) {
+        wantMove = true;
+        ix /= len;
+        iy /= len;
+        // Same basis as forwardFromAngle inverse: angle 0 = north (−Y)
+        desiredHeading = Math.atan2(-ix, -iy);
+      }
+
+      if (wantMove) {
+        const da = wrapAngle(desiredHeading - p.hullAngle);
+        const speedRatio = Math.min(
+          1,
+          Math.abs(p.speed) / Math.max(40, maxSpeed),
+        );
+        // Pivot faster when nearly stopped so redirects feel snappy
+        const turnMul = 1.35 - 0.55 * speedRatio;
+        const maxTurn = hullTurnRate * turnMul;
+        p.hullAngle = wrapAngle(
+          p.hullAngle + clamp(da, -maxTurn * dt, maxTurn * dt),
+        );
+
+        // Drive only once roughly facing the stick (no sideways skate)
+        const face = Math.cos(wrapAngle(desiredHeading - p.hullAngle));
+        const drive = face > 0.15 ? Math.max(0.2, face) : 0.08;
+        p.speed += accel * drive * dt;
+
+        // Hard misalignment scrub
+        if (Math.abs(da) > 0.55 && Math.abs(p.speed) > 40) {
+          p.speed *= Math.exp(-1.6 * dt);
+        }
+      } else {
+        // Coast / brake when stick released
+        p.speed *= Math.exp(-4.0 * dt);
+        if (Math.abs(p.speed) < 6) p.speed = 0;
+      }
+
+      // No reverse gear in screen-relative mode — S means "go down the map"
+      p.speed = clamp(p.speed, 0, maxSpeed);
+
+      this.moveTank(p, dt);
+      const turnForDust = wantMove
+        ? Math.sign(wrapAngle(desiredHeading - p.hullAngle))
+        : 0;
+      this.spawnTrackDust(p, turnForDust, dt);
     }
 
     // Turret aim — auto-target overrides; else exclusive keys/mouse modes
@@ -1192,24 +1261,6 @@ export class TankzEngine {
         );
       }
     }
-
-    const accel = this.run.accel;
-    const friction = 3.6;
-    // Reverse is slower and weaker (realistic gearbox feel)
-    const reverseMax = maxSpeed * 0.42;
-    if (throttle > 0) {
-      p.speed += throttle * accel * dt;
-    } else if (throttle < 0) {
-      p.speed += throttle * accel * 0.62 * dt;
-    } else {
-      // Engine braking + drag
-      p.speed *= Math.exp(-friction * dt);
-      if (Math.abs(p.speed) < 5) p.speed = 0;
-    }
-    p.speed = clamp(p.speed, -reverseMax, maxSpeed);
-
-    this.moveTank(p, dt);
-    this.spawnTrackDust(p, hullSteer, dt);
 
     const wantFire =
       this.keys.has("Space") ||
@@ -1576,98 +1627,103 @@ export class TankzEngine {
       if (!e.alive) continue;
       if (e.invuln > 0) e.invuln -= dt;
       if (e.fireCd > 0) e.fireCd -= dt;
+      if (e.aiUnstick > 0) e.aiUnstick -= dt;
 
       const dx = this.player.x - e.x;
       const dy = this.player.y - e.y;
       const dist = Math.hypot(dx, dy) || 1;
       const maxMove = e.maxMove ?? 100;
 
-      // ── Independent turret: track player with slight lead ──
+      // Independent turret: track player with slight lead
       const pf = forwardFromAngle(this.player.hullAngle);
       const leadT = Math.min(0.45, dist / Math.max(120, e.bulletSpeed)) * 0.55;
       const aimX = this.player.x + pf.x * this.player.speed * leadT;
       const aimY = this.player.y + pf.y * this.player.speed * leadT;
       const desiredTurret = Math.atan2(-(aimX - e.x), -(aimY - e.y));
       const daTurret = wrapAngle(desiredTurret - e.turretAngle);
-      // Turret slews independently of hull (slower than player mouse, still readable)
       const turretRate = 2.0 + Math.min(1.2, this.wave * 0.08);
       e.turretAngle = wrapAngle(
         e.turretAngle + clamp(daTurret, -turretRate * dt, turretRate * dt),
       );
 
-      // ── Hull AI: replan desired heading / throttle periodically ──
-      e.aiTimer -= dt;
-      if (e.aiTimer <= 0) {
-        e.aiTimer = 0.4 + Math.random() * 0.55;
-        // Approach, hold, or reverse — classic armor tactics
-        let heading = Math.atan2(-dx, -dy);
-        // Occasional flank / circle
-        if (dist > 120 && dist < 360 && Math.random() < 0.35) {
-          heading += (Math.random() > 0.5 ? 1 : -1) * (0.7 + Math.random() * 0.6);
-        }
-        // Separation from other tanks
-        for (const o of this.enemies) {
-          if (o === e || !o.alive) continue;
-          const sx = e.x - o.x;
-          const sy = e.y - o.y;
-          const sd = Math.hypot(sx, sy);
-          if (sd < 56 && sd > 0.1) {
-            const sep = Math.atan2(-sx, -sy);
-            heading = wrapAngle(heading + wrapAngle(sep - heading) * 0.45);
-          }
-        }
-        e.aiHeading = heading;
+      // Stuck detection
+      const moved = Math.hypot(e.x - e.aiLastX, e.y - e.aiLastY);
+      if (Math.abs(e.aiThrottle) > 0.2 && Math.abs(e.speed) < 18 && moved < 2.5) {
+        e.aiStuck += dt;
+      } else if (moved > 10) {
+        e.aiStuck = Math.max(0, e.aiStuck - dt * 1.5);
+      }
+      e.aiLastX = e.x;
+      e.aiLastY = e.y;
 
-        if (dist > 260) e.aiThrottle = 0.95;
-        else if (dist > 150) e.aiThrottle = 0.55;
-        else if (dist < 85) e.aiThrottle = -0.55;
-        else e.aiThrottle = 0.15 + Math.random() * 0.25;
-
-        // Only fire when gun is roughly on target and in range
-        e.aiWantFire =
-          Math.abs(daTurret) < 0.28 && dist < 500 && dist > 40;
+      if (e.aiStuck > 0.55) {
+        e.aiStuck = 0;
+        e.aiUnstick = 0.7 + Math.random() * 0.35;
+        e.aiSide *= -1;
+        this.planEnemyPath(e, true);
       }
 
-      // Re-evaluate fire continuously (gun tracks every frame)
-      if (Math.abs(daTurret) < 0.22 && dist < 480 && dist > 36) {
+      e.aiTimer -= dt;
+      if (e.aiTimer <= 0 || (e.aiUnstick > 0 && e.aiTimer < 0.15)) {
+        e.aiTimer =
+          e.aiUnstick > 0
+            ? 0.18 + Math.random() * 0.12
+            : 0.28 + Math.random() * 0.35;
+        this.planEnemyPath(e, e.aiUnstick > 0);
+      }
+
+      // Look-ahead: about to hit wall → replan
+      const look = this.probeClearance(e.x, e.y, e.hullAngle, e.radius, 48);
+      if (look < 22 && e.aiUnstick <= 0 && Math.abs(e.speed) > 12) {
+        e.aiTimer = 0;
+        e.aiUnstick = 0.35;
+        e.aiSide = this.pickOpenSide(e);
+        this.planEnemyPath(e, true);
+      }
+
+      const hasLos = this.hasLineOfSight(e.x, e.y, this.player.x, this.player.y);
+      if (hasLos && Math.abs(daTurret) < 0.24 && dist < 500 && dist > 36) {
         e.aiWantFire = true;
-      } else if (Math.abs(daTurret) > 0.55) {
+      } else if (!hasLos || Math.abs(daTurret) > 0.5 || dist > 520) {
         e.aiWantFire = false;
       }
 
-      // ── Hull turn toward planned heading (independent of turret) ──
       const daHull = wrapAngle(e.aiHeading - e.hullAngle);
       const speedRatio = Math.min(1, Math.abs(e.speed) / Math.max(40, maxMove));
-      const hullTurnRate = 2.05 * (1.15 - 0.55 * speedRatio);
-      // Prefer pivot when badly misaligned — don't drive full tilt sideways
+      const hullTurnRate = 2.35 * (1.2 - 0.5 * speedRatio);
       const face = Math.cos(daHull);
       e.hullAngle = wrapAngle(
         e.hullAngle + clamp(daHull, -hullTurnRate * dt, hullTurnRate * dt),
       );
 
-      // Drive only when hull roughly faces desired path
       let throttle = e.aiThrottle;
-      if (face < 0.25) {
-        // Pivot in place first
-        throttle = Math.abs(throttle) > 0.3 ? Math.sign(throttle) * 0.12 : 0;
-      } else if (face < 0.65) {
-        throttle *= 0.45 + 0.55 * face;
+      if (face < 0.2) {
+        throttle = Math.abs(throttle) > 0.25 ? Math.sign(throttle || 1) * 0.1 : 0;
+      } else if (face < 0.6) {
+        throttle *= 0.4 + 0.6 * face;
+      }
+      const fwdClear = this.probeClearance(e.x, e.y, e.hullAngle, e.radius, 56);
+      if (throttle > 0 && fwdClear < 28) {
+        throttle = Math.min(throttle, 0.15);
+        if (fwdClear < 18) throttle = -0.4;
       }
 
-      // Track scrub when turning hard
-      if (Math.abs(daHull) > 0.4 && Math.abs(e.speed) > 30) {
-        e.speed *= Math.exp(-1.1 * dt);
+      if (Math.abs(daHull) > 0.45 && Math.abs(e.speed) > 30) {
+        e.speed *= Math.exp(-1.2 * dt);
       }
 
-      // Smooth accel / reverse limits
       const targetSpeed = throttle * maxMove;
-      const reverseCap = maxMove * 0.4;
-      const accelRate = throttle >= 0 ? 3.2 : 2.4;
+      const reverseCap = maxMove * 0.55;
+      const accelRate = throttle >= 0 ? 3.4 : 2.8;
       e.speed += (targetSpeed - e.speed) * (1 - Math.exp(-accelRate * dt));
       e.speed = clamp(e.speed, -reverseCap, maxMove);
 
       this.moveTank(e, dt);
-      this.spawnTrackDust(e, Math.sign(daHull) * Math.min(1, Math.abs(daHull)), dt);
+      this.spawnTrackDust(
+        e,
+        Math.sign(daHull) * Math.min(1, Math.abs(daHull)),
+        dt,
+      );
       e.track += Math.abs(e.speed) * dt * 0.04;
 
       if (e.aiWantFire) this.tryFire(e);
@@ -1681,11 +1737,160 @@ export class TankzEngine {
     }
   }
 
+  private planEnemyPath(e: Tank, emergency: boolean) {
+    const px = this.player.x;
+    const py = this.player.y;
+    const dx = px - e.x;
+    const dy = py - e.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const toPlayer = Math.atan2(-dx, -dy);
+
+    let sepX = 0;
+    let sepY = 0;
+    for (const o of this.enemies) {
+      if (o === e || !o.alive) continue;
+      const sx = e.x - o.x;
+      const sy = e.y - o.y;
+      const sd = Math.hypot(sx, sy);
+      if (sd < 70 && sd > 0.1) {
+        const w = (70 - sd) / 70;
+        sepX += (sx / sd) * w;
+        sepY += (sy / sd) * w;
+      }
+    }
+
+    const candidates: number[] = [];
+    const push = (a: number) => candidates.push(wrapAngle(a));
+    push(toPlayer);
+    for (const o of [0.35, 0.7, 1.05, 1.45, 1.9, Math.PI]) {
+      push(toPlayer + o);
+      push(toPlayer - o);
+    }
+    push(0);
+    push(Math.PI / 2);
+    push(-Math.PI / 2);
+    push(Math.PI);
+    push(e.hullAngle + e.aiSide * (Math.PI / 2));
+    push(e.hullAngle - e.aiSide * (Math.PI / 2));
+    push(e.hullAngle + Math.PI);
+    push(e.hullAngle);
+    if (emergency) {
+      push(e.hullAngle + e.aiSide * 1.2);
+      push(e.hullAngle - e.aiSide * 1.2);
+      push(e.hullAngle + Math.PI * 0.75 * e.aiSide);
+    }
+
+    let bestAng = toPlayer;
+    let bestScore = -Infinity;
+    const probeR = e.radius + 2;
+
+    for (const ang of candidates) {
+      const clear = this.probeClearance(e.x, e.y, ang, probeR, 130);
+      if (clear < 20 && !emergency) continue;
+
+      const f = forwardFromAngle(ang);
+      const step = Math.min(clear * 0.85, 100);
+      const nx = e.x + f.x * step;
+      const ny = e.y + f.y * step;
+      const newDist = Math.hypot(px - nx, py - ny);
+      const progress = dist - newDist;
+      const sepDot = f.x * sepX + f.y * sepY;
+
+      let score = progress * 2.4 + clear * 0.22 + sepDot * 28;
+      if (this.hasLineOfSight(nx, ny, px, py)) score += 35;
+      score += Math.cos(wrapAngle(ang - e.aiHeading)) * 12;
+      score += Math.cos(wrapAngle(ang - e.hullAngle)) * 6;
+      if (newDist > 100 && newDist < 280) score += 18;
+      if (newDist < 70) score -= 25;
+
+      if (emergency) {
+        score = clear * 1.1 + progress * 0.8 + sepDot * 20;
+        if (clear > 50) score += 40;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestAng = ang;
+      }
+    }
+
+    e.aiHeading = bestAng;
+    const chosenClear = this.probeClearance(e.x, e.y, bestAng, probeR, 90);
+    if (emergency) {
+      e.aiThrottle = chosenClear > 40 ? 0.85 : chosenClear > 22 ? 0.45 : -0.65;
+    } else if (dist > 280) {
+      e.aiThrottle = chosenClear > 30 ? 0.95 : 0.5;
+    } else if (dist > 160) {
+      e.aiThrottle = 0.55;
+    } else if (dist < 80) {
+      e.aiThrottle = this.hasLineOfSight(e.x, e.y, px, py) ? -0.35 : 0.4;
+    } else {
+      e.aiThrottle = 0.25 + Math.random() * 0.2;
+    }
+    if (chosenClear < 24 && e.aiThrottle > 0) e.aiThrottle = -0.5;
+  }
+
+  private pickOpenSide(e: Tank): number {
+    const left = this.probeClearance(
+      e.x,
+      e.y,
+      e.hullAngle + Math.PI / 2,
+      e.radius,
+      80,
+    );
+    const right = this.probeClearance(
+      e.x,
+      e.y,
+      e.hullAngle - Math.PI / 2,
+      e.radius,
+      80,
+    );
+    if (left === right) return e.aiSide || 1;
+    return left > right ? 1 : -1;
+  }
+
+  private probeClearance(
+    x: number,
+    y: number,
+    angle: number,
+    radius: number,
+    maxDist: number,
+  ): number {
+    const { x: fx, y: fy } = forwardFromAngle(angle);
+    const step = 6;
+    for (let d = radius + 4; d <= maxDist; d += step) {
+      if (this.collidesSolid(x + fx * d, y + fy * d, radius * 0.92)) {
+        return Math.max(0, d - step);
+      }
+    }
+    return maxDist;
+  }
+
+  private hasLineOfSight(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+  ): boolean {
+    const dist = Math.hypot(x1 - x0, y1 - y0);
+    if (dist < 8) return true;
+    const steps = Math.ceil(dist / (TILE * 0.35));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const x = x0 + (x1 - x0) * t;
+      const y = y0 + (y1 - y0) * t;
+      const c = Math.floor(x / TILE);
+      const r = Math.floor(y / TILE);
+      const tile = this.getTile(c, r);
+      if (tile === "#" || tile === "S" || tile === "~") return false;
+    }
+    return true;
+  }
+
   private moveTank(t: Tank, dt: number) {
     const { x: fx, y: fy } = forwardFromAngle(t.hullAngle);
-    // Tracks only push along hull forward — no lateral skate
-    let nx = t.x + fx * t.speed * dt;
-    let ny = t.y + fy * t.speed * dt;
+    const nx = t.x + fx * t.speed * dt;
+    const ny = t.y + fy * t.speed * dt;
 
     let hitX = false;
     let hitY = false;
@@ -1693,23 +1898,35 @@ export class TankzEngine {
       t.x = nx;
     } else {
       hitX = true;
-      t.speed *= 0.35;
+      t.speed *= 0.3;
     }
     if (!this.collidesSolid(t.x, ny, t.radius)) {
       t.y = ny;
     } else {
       hitY = true;
-      t.speed *= 0.35;
+      t.speed *= 0.3;
     }
 
     if ((hitX || hitY) && t.team === "enemy") {
-      // Bounce plan: reverse and reorient hull away from wall
-      t.aiTimer = 0.15 + Math.random() * 0.25;
-      t.aiThrottle = -0.75;
-      t.aiHeading = wrapAngle(
-        t.hullAngle + (Math.random() > 0.5 ? 1.1 : -1.1) + (Math.random() - 0.5) * 0.4,
-      );
-      t.aiSteer = Math.random() > 0.5 ? 1 : -1;
+      t.aiSide = this.pickOpenSide(t);
+      t.aiUnstick = Math.max(t.aiUnstick, 0.55);
+      t.aiTimer = 0;
+      t.aiThrottle = -0.55;
+      const slide = wrapAngle(t.hullAngle + t.aiSide * (Math.PI / 2));
+      const slideClear = this.probeClearance(t.x, t.y, slide, t.radius, 70);
+      const reverse = wrapAngle(t.hullAngle + Math.PI);
+      const revClear = this.probeClearance(t.x, t.y, reverse, t.radius, 70);
+      if (slideClear >= revClear && slideClear > 24) {
+        t.aiHeading = slide;
+        t.aiThrottle = 0.7;
+      } else if (revClear > 24) {
+        t.aiHeading = reverse;
+        t.aiThrottle = 0.75;
+      } else {
+        t.aiHeading = wrapAngle(slide + (Math.random() - 0.5) * 0.5);
+        t.aiThrottle = -0.7;
+      }
+      this.planEnemyPath(t, true);
     }
 
     t.x = clamp(t.x, t.radius, WORLD_COLS * TILE - t.radius);
@@ -2526,14 +2743,34 @@ export class TankzEngine {
     ctx.fillRect(-10, -15, 20, 30);
     ctx.fillStyle = body;
     ctx.fillRect(-8, -13, 16, 26);
-    // front plate
+    // front nose plate + chevron so "forward" is obvious
     ctx.fillStyle = bodyLight;
-    ctx.globalAlpha = (ctx.globalAlpha || 1) * 0.35;
-    ctx.fillRect(-6, -13, 12, 5);
-    ctx.globalAlpha = t.invuln > 0 && Math.floor(t.invuln * 12) % 2 === 0 ? 0.45 : 1;
+    ctx.globalAlpha =
+      (t.invuln > 0 && Math.floor(t.invuln * 12) % 2 === 0 ? 0.45 : 1) * 0.95;
+    ctx.beginPath();
+    ctx.moveTo(-7, -8);
+    ctx.lineTo(0, -15);
+    ctx.lineTo(7, -8);
+    ctx.lineTo(6, -5);
+    ctx.lineTo(-6, -5);
+    ctx.closePath();
+    ctx.fill();
+    // bright forward arrow
+    ctx.fillStyle = isPlayer ? "#9ff5e8" : "#ffb0b6";
+    ctx.globalAlpha =
+      t.invuln > 0 && Math.floor(t.invuln * 12) % 2 === 0 ? 0.45 : 1;
+    ctx.beginPath();
+    ctx.moveTo(0, -13);
+    ctx.lineTo(4, -7);
+    ctx.lineTo(-4, -7);
+    ctx.closePath();
+    ctx.fill();
     // hatch plate
     ctx.fillStyle = bodyDark;
     ctx.fillRect(-5, 2, 10, 8);
+    // rear engine block (darker = back)
+    ctx.fillStyle = metal;
+    ctx.fillRect(-6, 10, 12, 5);
 
     ctx.restore();
 

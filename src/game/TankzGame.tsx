@@ -9,6 +9,10 @@ import {
 } from "./engine";
 import { unlockAudio } from "./audio";
 
+const TIP_XMONEY_URL = "https://x.com/i/money/pay/nease";
+const TIP_VENMO_URL = "https://venmo.com/u/nease";
+const XMONEY_LOGO_SRC = "/xmoney-logo.png";
+
 const INITIAL_HUD: HudSnapshot = {
   phase: "title",
   score: 0,
@@ -330,10 +334,10 @@ export function TankzGame() {
 
       {phase === "playing" && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 rounded-full border border-border/50 bg-surface/70 px-3 py-1 text-[11px] text-muted backdrop-blur-sm md:block">
-          WASD body ·{" "}
-          {hud.aimMode === "mouse" ? "Mouse aim" : "Q/E or ←→ aim"} · Tab
-          lock · Space fire
-          {hud.missilesUnlocked ? " · F/RMB missiles" : ""} · M aim mode · Esc
+          WASD move on screen ·{" "}
+          {hud.aimMode === "mouse" ? "Mouse aim" : "Q/E aim gun"} · Tab lock ·
+          Space fire
+          {hud.missilesUnlocked ? " · F missiles" : ""} · Esc
         </div>
       )}
 
@@ -341,32 +345,32 @@ export function TankzGame() {
         <div className="absolute inset-x-0 bottom-0 z-20 flex items-end justify-between gap-3 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:hidden">
           <div className="flex flex-col items-center gap-1">
             <span className="text-[9px] font-medium tracking-[0.14em] text-muted uppercase">
-              Drive
+              Move
             </span>
             <div className="grid grid-cols-3 gap-1.5">
               <div />
               <TouchBtn
                 label="▲"
-                ariaLabel="Forward"
+                ariaLabel="Move up"
                 onDown={() => setTouch("up", true)}
                 onUp={() => setTouch("up", false)}
               />
               <div />
               <TouchBtn
                 label="◀"
-                ariaLabel="Turn body left"
+                ariaLabel="Move left"
                 onDown={() => setTouch("left", true)}
                 onUp={() => setTouch("left", false)}
               />
               <TouchBtn
                 label="▼"
-                ariaLabel="Reverse"
+                ariaLabel="Move down"
                 onDown={() => setTouch("down", true)}
                 onUp={() => setTouch("down", false)}
               />
               <TouchBtn
                 label="▶"
-                ariaLabel="Turn body right"
+                ariaLabel="Move right"
                 onDown={() => setTouch("right", true)}
                 onUp={() => setTouch("right", false)}
               />
@@ -702,7 +706,7 @@ function MenuContent({
 }) {
   if (phase === "title") {
     return (
-      <div className="space-y-5">
+      <div className="max-h-[min(88dvh,820px)] space-y-4 overflow-y-auto pr-0.5">
         <div className="space-y-2">
           <p className="text-[11px] font-medium tracking-[0.22em] text-accent uppercase">
             Armor Division
@@ -711,18 +715,18 @@ function MenuContent({
             Tankz
           </h1>
           <p className="max-w-sm text-sm leading-relaxed text-muted">
-            Drive the hull and aim the gun separately. Clear waves, kit out
-            your tank, and claim a spot on the hall of fame.
+            Move with WASD on the screen, aim the gun separately. Clear waves,
+            kit out your tank, and claim a spot on the hall of fame.
           </p>
         </div>
         <AimModeToggle mode={hud.aimMode} onChange={onSetAimMode} />
         <div className="grid grid-cols-2 gap-2 text-xs text-muted">
-          <Hint k="W / S" v="Drive" />
-          <Hint k="A / D" v="Turn body" />
-          <Hint k="Q / E · ←/→" v="Aim (keys)" />
-          <Hint k="Mouse" v="Aim (mouse)" />
+          <Hint k="WASD" v="Move (screen)" />
+          <Hint k="Mouse / Q E" v="Aim gun" />
+          <Hint k="Space" v="Fire cannon" />
+          <Hint k="F" v="Missiles" />
           <Hint k="Tab" v="Auto-target" />
-          <Hint k="M" v="Toggle aim mode" />
+          <Hint k="M" v="Aim mode" />
         </div>
         {hud.leaderboard.length > 0 && (
           <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">
@@ -739,6 +743,10 @@ function MenuContent({
         >
           Deploy
         </button>
+        <TipTheMaker />
+        <p className="text-center text-[11px] text-subtle">
+          © {new Date().getFullYear()} NeaseMedia
+        </p>
       </div>
     );
   }
@@ -867,6 +875,10 @@ function MenuContent({
         >
           Play Again
         </button>
+        <TipTheMaker compact />
+        <p className="text-center text-[11px] text-subtle">
+          © {new Date().getFullYear()} NeaseMedia
+        </p>
       </div>
     );
   }
@@ -905,6 +917,154 @@ function MenuContent({
       >
         Retry
       </button>
+      <TipTheMaker compact />
+      <p className="text-center text-[11px] text-subtle">
+        © {new Date().getFullYear()} NeaseMedia
+      </p>
+    </div>
+  );
+}
+
+function TipTheMaker({ compact }: { compact?: boolean }) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open]);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={`inline-flex w-full items-center justify-center gap-2 rounded-lg border border-accent/40 bg-accent/15 px-3 font-semibold text-accent transition-colors hover:bg-accent/25 active:scale-[0.98] ${
+          compact ? "py-2 text-sm" : "py-2.5 text-sm"
+        }`}
+      >
+        <span aria-hidden className="text-base">
+          ✦
+        </span>
+        Tip the Game Maker
+      </button>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/65 p-4 backdrop-blur-[3px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tip-dialog-title"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-[0_24px_80px_rgba(0,0,0,0.55)] sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-medium tracking-[0.18em] text-muted uppercase">
+                  Support
+                </p>
+                <h3
+                  id="tip-dialog-title"
+                  className="mt-0.5 text-lg font-semibold tracking-tight text-fg"
+                >
+                  Tip the Game Maker
+                </h3>
+                <p className="mt-1 text-xs leading-relaxed text-muted">
+                  Thanks for playing Tankz — pick a way to send a tip.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-muted hover:text-fg"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <a
+                href={TIP_XMONEY_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-3 py-3 transition-colors hover:border-accent/40 hover:bg-bg active:scale-[0.99]"
+              >
+                <XMoneyLogo />
+                <div className="min-w-0 flex-1 text-left">
+                  <p className="text-sm font-semibold text-fg">xMoney</p>
+                  <p className="truncate text-[11px] text-muted">
+                    x.com/i/money/pay/nease
+                  </p>
+                </div>
+                <span className="text-xs text-accent">Open →</span>
+              </a>
+
+              <a
+                href={TIP_VENMO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 rounded-xl border border-border bg-surface-2 px-3 py-3 transition-colors hover:border-[#008CFF]/50 hover:bg-bg active:scale-[0.99]"
+              >
+                <VenmoLogo />
+                <div className="min-w-0 flex-1 text-left">
+                  <p className="text-sm font-semibold text-fg">Venmo</p>
+                  <p className="truncate text-[11px] text-muted">@nease</p>
+                </div>
+                <span className="text-xs text-[#5eb3ff]">Open →</span>
+              </a>
+            </div>
+
+            <p className="mt-4 text-center text-[11px] text-subtle">
+              © {new Date().getFullYear()} NeaseMedia
+            </p>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function XMoneyLogo() {
+  return (
+    <div
+      className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-black shadow-sm"
+      aria-hidden
+    >
+      <img
+        src={XMONEY_LOGO_SRC}
+        alt=""
+        width={48}
+        height={48}
+        className="h-12 w-12 object-cover"
+        draggable={false}
+      />
+    </div>
+  );
+}
+
+function VenmoLogo() {
+  return (
+    <div
+      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#008CFF] text-white shadow-sm"
+      aria-hidden
+    >
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+        <path
+          d="M20.2 2.4c.7 1.2 1 2.5 1 4.1 0 5.1-4.3 11.7-7.8 15.5h-8L2.3 3.6h7.4l1.7 13.2c1.9-3.1 4.2-8 4.2-11.3 0-1.1-.2-1.9-.5-2.6l5.1-.5z"
+          fill="white"
+        />
+      </svg>
     </div>
   );
 }
