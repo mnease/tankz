@@ -88,9 +88,55 @@ const svgFull = `<?xml version="1.0" encoding="UTF-8"?>
   <rect x="220" y="448" width="72" height="8" rx="4" fill="#5eead4"/>
 </svg>`;
 
+/**
+ * Favicon / tab mark — dual-mode readable on light AND dark browser chrome.
+ * Solid plate + teal rim defines the chip on any tab color; tank is chunkier
+ * with brighter edges so silhouette survives 16–32px.
+ */
+const tankFavicon = `
+  <!-- track -->
+  <rect x="6" y="58" width="108" height="30" rx="12" fill="#0d1016" stroke="#c8d0dc" stroke-width="3"/>
+  <!-- road wheels -->
+  <circle cx="28" cy="73" r="10" fill="#1a2030" stroke="#5eead4" stroke-width="2.5"/>
+  <circle cx="28" cy="73" r="3.5" fill="#5eead4"/>
+  <circle cx="60" cy="73" r="10" fill="#1a2030" stroke="#5eead4" stroke-width="2.5"/>
+  <circle cx="60" cy="73" r="3.5" fill="#5eead4"/>
+  <circle cx="92" cy="73" r="10" fill="#1a2030" stroke="#5eead4" stroke-width="2.5"/>
+  <circle cx="92" cy="73" r="3.5" fill="#5eead4"/>
+  <!-- hull -->
+  <path d="M16 60 L24 34 L96 32 L116 50 L116 60 Z" fill="#2a3344" stroke="#e8edf4" stroke-width="2.5" stroke-linejoin="round"/>
+  <!-- turret -->
+  <rect x="38" y="14" width="50" height="24" rx="3" fill="#323b4f" stroke="#e8edf4" stroke-width="2.5"/>
+  <rect x="48" y="7" width="16" height="10" rx="2" fill="#1e2533" stroke="#c8d0dc" stroke-width="2"/>
+  <!-- mantlet -->
+  <rect x="84" y="20" width="14" height="14" rx="2" fill="#2a3344" stroke="#e8edf4" stroke-width="2"/>
+  <!-- barrel + muzzle (brand teal — strongest signal) -->
+  <rect x="94" y="24" width="52" height="8" rx="2" fill="#5eead4"/>
+  <rect x="142" y="20" width="14" height="16" rx="2.5" fill="#2dd4bf"/>
+  <rect x="146" y="23" width="2.5" height="10" rx="0.5" fill="#0a0c10" opacity="0.45"/>
+  <rect x="151" y="23" width="2.5" height="10" rx="0.5" fill="#0a0c10" opacity="0.45"/>
+  <!-- antenna -->
+  <line x1="44" y1="14" x2="44" y2="2" stroke="#5eead4" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="44" cy="2" r="2.5" fill="#5eead4"/>
+`.trim();
+
+const svgFavicon = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Tankz">
+  <!-- Solid plate: visible chip on light tabs -->
+  <rect width="64" height="64" rx="14" fill="#12141a"/>
+  <!-- Teal rim: defines the chip on dark tabs -->
+  <rect x="1.5" y="1.5" width="61" height="61" rx="12.5" fill="none" stroke="#5eead4" stroke-width="3"/>
+  <!-- Soft inner ring for depth -->
+  <rect x="4.5" y="4.5" width="55" height="55" rx="10" fill="none" stroke="#2a3140" stroke-width="1"/>
+  <!-- Landscape tank centered and scaled to fill the badge -->
+  <g transform="translate(4, 16.5) scale(0.35)">${tankFavicon}</g>
+</svg>`;
+
 writeFileSync(join(brand, "tankz-icon.svg"), svgIcon);
 writeFileSync(join(brand, "tankz-wordmark.svg"), svgWordmark);
 writeFileSync(join(brand, "tankz-logo.svg"), svgFull);
+writeFileSync(join(brand, "tankz-favicon.svg"), svgFavicon);
+writeFileSync(join(root, "public/favicon.svg"), svgFavicon);
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ deviceScaleFactor: 2 });
@@ -130,7 +176,17 @@ await svgToPng(
 await svgToPng(join(brand, "tankz-logo.svg"), join(brand, "tankz-logo.png"), 512, 512, {
   solid: true,
 });
-await svgToPng(join(brand, "tankz-icon.svg"), join(root, "public/favicon.png"), 64, 64);
+// Favicon: opaque badge (no transparency) so dark/light tabs both see a solid chip
+await svgToPng(join(root, "public/favicon.svg"), join(root, "public/favicon.png"), 64, 64, {
+  solid: true,
+});
+await svgToPng(
+  join(root, "public/favicon.svg"),
+  join(brand, "tankz-favicon.png"),
+  64,
+  64,
+  { solid: true },
+);
 
 await browser.close();
-console.log("logo set complete → public/brand/");
+console.log("logo set complete → public/brand/ + public/favicon.{svg,png}");
