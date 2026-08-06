@@ -1,4 +1,3 @@
-import { createServerFn } from "@tanstack/react-start";
 import { getSql } from "@/lib/db";
 
 export const LB_SIZE = 10;
@@ -13,7 +12,7 @@ export type LeaderboardEntry = {
   at: number;
 };
 
-function cleanName(raw: string): string {
+export function cleanName(raw: string): string {
   const name = String(raw ?? "")
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
@@ -33,7 +32,11 @@ function mapRows(
   }));
 }
 
-async function fetchTop(sql: Awaited<ReturnType<typeof getSql>>) {
+/** Top scores from shared Postgres — same board for every client. */
+export async function fetchLeaderboard(
+  limit = LB_SIZE,
+): Promise<LeaderboardEntry[]> {
+  const sql = await getSql();
   const rows = await sql<{
     name: string;
     score: number;
@@ -47,79 +50,74 @@ async function fetchTop(sql: Awaited<ReturnType<typeof getSql>>) {
       (extract(epoch from created_at) * 1000)::bigint as at
     from tankz_scores
     order by score desc, created_at asc
-    limit ${LB_SIZE}
+    limit ${limit}
   `;
   return mapRows(rows);
 }
 
-/** Public top scores — shared across every player / device. */
-export const getLeaderboard = createServerFn({ method: "GET" }).handler(
-  async (): Promise<LeaderboardEntry[]> => {
-    const sql = await getSql();
-    return fetchTop(sql);
-  },
-);
+export type SubmitScoreInput = {
+  name: string;
+  score: number;
+  wave: number;
+};
+
+export type SubmitScoreResult = {
+  leaderboard: LeaderboardEntry[];
+  rank: number | null;
+  qualified: boolean;
+  highScore: number;
+};
 
 /**
- * Insert a qualifying score and return the updated top board.
- * No auth required (arcade-style). Server validates + ranks.
+ * Persist a score to the shared database, then return the global top board.
+ * Every positive score is stored so hall of fame is universal across players.
  */
-export const submitScore = createServerFn({ method: "POST" })
-  .validator((input: { name: string; score: number; wave: number }) => {
-    const name = cleanName(input?.name ?? "");
-    const score = Math.floor(Number(input?.score));
-    const wave = Math.floor(Number(input?.wave));
-    if (!Number.isFinite(score) || score <= 0 || score > 100_000_000) {
-      throw new Error("Invalid score");
-    }
-    if (!Number.isFinite(wave) || wave < 0 || wave > 10_000) {
-      throw new Error("Invalid wave");
-    }
-    return { name, score, wave };
-  })
-  .handler(
-    async ({
-      data,
-    }): Promise<{
-      leaderboard: LeaderboardEntry[];
-      rank: number | null;
-      qualified: boolean;
-    }> => {
-      const sql = await getSql();
-      const { name, score, wave } = data;
+export async function persistScore(
+  input: SubmitScoreInput,
+): Promise<SubmitScoreResult> {
+  const name = cleanName(input.name);
+  const score = Math.floor(Number(input.score));
+  const wave = Math.floor(Number(input.wave));
 
-      // Only store if it would land on the board (or board not full yet).
-      const current = await fetchTop(sql);
-      const qualifies =
-        current.length < LB_SIZE || score > (current[current.length - 1]?.score ?? 0);
+  if (!Number.isFinite(score) || score <= 0 || score > 100_000_000) {
+    throw new Error("Invalid score");
+  }
+  if (!Number.isFinite(wave) || wave < 0 || wave > 10_000) {
+    throw new Error("Invalid wave");
+  }
 
-      if (!qualifies) {
-        return { leaderboard: current, rank: null, qualified: false };
-      }
+  const sql = await getSql();
 
-      await sql`
-        insert into tankz_scores (name, score, wave)
-        values (${name}, ${score}, ${wave})
-      `;
+  // Always write — universal persistence for every completed run that posts.
+  await sql`
+    insert into tankz_scores (name, score, wave)
+    values (${name}, ${score}, ${wave})
+  `;
 
-      // Keep table from growing unbounded — retain a buffer past top N.
-      await sql`
-        delete from tankz_scores
-        where id not in (
-          select id from tankz_scores
-          order by score desc, created_at asc
-          limit ${LB_SIZE * 5}
-        )
-      `;
+  // Trim old non-top rows so the table cannot grow without bound.
+  await sql`
+    delete from tankz_scores
+    where id in (
+      select id from (
+        select id,
+          row_number() over (order by score desc, created_at asc) as rn
+        from tankz_scores
+      ) ranked
+      where rn > ${LB_SIZE * 20}
+    )
+  `;
 
-      const leaderboard = await fetchTop(sql);
-      const rankIdx = leaderboard.findIndex(
-        (e) => e.name === name && e.score === score,
-      );
-      return {
-        leaderboard,
-        rank: rankIdx >= 0 ? rankIdx + 1 : null,
-        qualified: true,
-      };
-    },
+  const leaderboard = await fetchLeaderboard(LB_SIZE);
+  const highScore = leaderboard[0]?.score ?? score;
+  const rankIdx = leaderboard.findIndex(
+    (e) => e.name === name && e.score === score,
   );
+  const qualified = rankIdx >= 0;
+
+  return {
+    leaderboard,
+    rank: qualified ? rankIdx + 1 : null,
+    qualified,
+    highScore,
+  };
+}

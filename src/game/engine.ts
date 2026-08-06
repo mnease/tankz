@@ -271,6 +271,7 @@ export type SubmitScoreFn = (entry: {
   leaderboard: ScoreEntry[];
   rank: number | null;
   qualified: boolean;
+  highScore?: number;
 } | null>;
 
 function loadAimMode(): AimMode {
@@ -1528,20 +1529,36 @@ export class TankzEngine {
       .then((res) => {
         if (res?.leaderboard) {
           this.applyLeaderboard(res.leaderboard, true);
+          if (typeof res.highScore === "number" && res.highScore > 0) {
+            this.highScore = Math.max(this.highScore, res.highScore);
+          }
           this.nameRank = res.rank;
           this.phase = this.pendingOutcome ?? "gameover";
-          this.message =
-            this.phase === "victory" ? "Sector Cleared" : "Mission Failed";
+          this.message = res.qualified
+            ? this.phase === "victory"
+              ? "Sector Cleared · Global rank saved"
+              : "Mission Failed · Score saved"
+            : this.phase === "victory"
+              ? "Sector Cleared · Score saved"
+              : "Mission Failed · Score saved";
           this.messageT = 99;
           this.scoreSubmitting = false;
           sfx.pickup();
           return;
         }
+        // Server rejected / unreachable — keep local so the player isn't stuck
         finishLocal(null);
+        this.message =
+          (this.phase === "victory" ? "Sector Cleared" : "Mission Failed") +
+          " · Offline save only";
+        this.messageT = 99;
       })
       .catch(() => {
-        // Network / server failure — still record locally so the run isn't lost
         finishLocal(null);
+        this.message =
+          (this.phase === "victory" ? "Sector Cleared" : "Mission Failed") +
+          " · Offline save only";
+        this.messageT = 99;
       });
   }
 

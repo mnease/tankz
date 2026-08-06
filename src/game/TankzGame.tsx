@@ -9,7 +9,67 @@ import {
 } from "./engine";
 import { unlockAudio } from "./audio";
 import { GAME_VERSION, GAME_GITHUB_URL } from "./version";
-import { getLeaderboard, submitScore } from "@/lib/leaderboard";
+import type { LeaderboardEntry } from "@/lib/leaderboard";
+
+async function loadGlobalBoard(): Promise<{
+  leaderboard: LeaderboardEntry[];
+  highScore: number;
+} | null> {
+  try {
+    const res = await fetch("/api/leaderboard", {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      leaderboard?: LeaderboardEntry[];
+      highScore?: number;
+    };
+    return {
+      leaderboard: Array.isArray(data.leaderboard) ? data.leaderboard : [],
+      highScore: Math.max(0, Math.floor(Number(data.highScore) || 0)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function postGlobalScore(entry: {
+  name: string;
+  score: number;
+  wave: number;
+}): Promise<{
+  leaderboard: LeaderboardEntry[];
+  rank: number | null;
+  qualified: boolean;
+  highScore: number;
+} | null> {
+  try {
+    const res = await fetch("/api/leaderboard", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(entry),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      leaderboard?: LeaderboardEntry[];
+      rank?: number | null;
+      qualified?: boolean;
+      highScore?: number;
+    };
+    if (!Array.isArray(data.leaderboard)) return null;
+    return {
+      leaderboard: data.leaderboard,
+      rank: data.rank ?? null,
+      qualified: Boolean(data.qualified),
+      highScore: Math.max(0, Math.floor(Number(data.highScore) || 0)),
+    };
+  } catch {
+    return null;
+  }
+}
 
 const TIP_XMONEY_URL = "https://x.com/i/money/pay/nease";
 const TIP_VENMO_URL = "https://venmo.com/u/nease";
@@ -76,32 +136,22 @@ export function TankzGame() {
     if (!canvas) return;
     const engine = new TankzEngine(canvas);
     engineRef.current = engine;
-    engine.onSubmitScore = async (entry) => {
-      try {
-        return await submitScore({
-          data: {
-            name: entry.name,
-            score: entry.score,
-            wave: entry.wave,
-          },
-        });
-      } catch {
-        return null;
-      }
-    };
+    engine.onSubmitScore = async (entry) => postGlobalScore(entry);
     engine.start();
 
-    // Load global leaderboard shared across all players
+    // Load universal leaderboard from Postgres (shared across all players)
     let cancelled = false;
-    void getLeaderboard()
-      .then((board) => {
-        if (cancelled || !engineRef.current) return;
-        engineRef.current.applyLeaderboard(board, true);
-        setHud(engineRef.current.getHud());
-      })
-      .catch(() => {
-        // Keep offline cache if server unreachable
-      });
+    void loadGlobalBoard().then((board) => {
+      if (cancelled || !engineRef.current || !board) return;
+      engineRef.current.applyLeaderboard(board.leaderboard, true);
+      if (board.highScore > 0) {
+        engineRef.current.highScore = Math.max(
+          engineRef.current.highScore,
+          board.highScore,
+        );
+      }
+      setHud(engineRef.current.getHud());
+    });
 
     const id = window.setInterval(() => {
       setHud(engine.getHud());
