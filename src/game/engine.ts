@@ -73,6 +73,10 @@ export interface HudSnapshot {
   nameCursor: number;
   nameRank: number | null;
   pendingOutcome: "gameover" | "victory" | null;
+  /** True while a global score submit is in flight */
+  scoreSubmitting: boolean;
+  /** Global board loaded from server (false until first fetch settles) */
+  boardSynced: boolean;
 }
 
 export type ControlsProbe = {
@@ -110,6 +114,7 @@ declare global {
       nameType?: (ch: string) => void;
       forceEndRun?: (outcome: "gameover" | "victory") => void;
       setScore?: (n: number) => void;
+      applyLeaderboard?: (entries: ScoreEntry[]) => void;
     };
   }
 }
@@ -203,9 +208,8 @@ const MAX_BULLETS = 96;
 const MAX_PARTICLES = 220;
 const MAX_EXPLOSIONS = 16;
 const MAX_ENEMIES = 10;
-const HS_KEY = "tankz-highscore-v1";
-const LB_KEY = "tankz-leaderboard-v1";
 const AIM_KEY = "tankz-aim-mode-v1";
+const LB_CACHE_KEY = "tankz-leaderboard-cache-v2";
 const NAME_MAX = 8;
 const NAME_MIN = 3;
 const LB_SIZE = 10;
@@ -224,68 +228,50 @@ function forwardFromAngle(angle: number): { x: number; y: number } {
   return { x: -Math.sin(angle), y: -Math.cos(angle) };
 }
 
-function loadHighScore() {
+/** Offline cache only — global board lives on the server. */
+function cacheLeaderboard(entries: ScoreEntry[]) {
   try {
-    return Number(localStorage.getItem(HS_KEY) || "0") || 0;
-  } catch {
-    return 0;
-  }
-}
-
-function saveHighScore(n: number) {
-  try {
-    localStorage.setItem(HS_KEY, String(n));
+    localStorage.setItem(
+      LB_CACHE_KEY,
+      JSON.stringify(entries.slice(0, LB_SIZE)),
+    );
   } catch {
     /* ignore */
   }
 }
 
-function loadLeaderboard(): ScoreEntry[] {
+function loadCachedLeaderboard(): ScoreEntry[] {
   try {
-    const raw = localStorage.getItem(LB_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as ScoreEntry[];
-      if (Array.isArray(parsed)) {
-        return parsed
-          .filter(
-            (e) =>
-              e &&
-              typeof e.score === "number" &&
-              typeof e.name === "string",
-          )
-          .map((e) => ({
-            name: String(e.name).toUpperCase().slice(0, NAME_MAX) || "AAA",
-            score: Math.max(0, Math.floor(e.score)),
-            wave: Math.max(0, Math.floor(e.wave || 0)),
-            at: e.at || Date.now(),
-          }))
-          .sort((a, b) => b.score - a.score)
-          .slice(0, LB_SIZE);
-      }
-    }
+    const raw = localStorage.getItem(LB_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as ScoreEntry[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (e) => e && typeof e.score === "number" && typeof e.name === "string",
+      )
+      .map((e) => ({
+        name: String(e.name).toUpperCase().slice(0, NAME_MAX) || "AAA",
+        score: Math.max(0, Math.floor(e.score)),
+        wave: Math.max(0, Math.floor(e.wave || 0)),
+        at: e.at || Date.now(),
+      }))
+      .sort((a, b) => b.score - a.score || a.at - b.at)
+      .slice(0, LB_SIZE);
   } catch {
-    /* ignore */
+    return [];
   }
-  // Migrate legacy single high score
-  const legacy = loadHighScore();
-  if (legacy > 0) {
-    const seed: ScoreEntry[] = [
-      { name: "ACE", score: legacy, wave: 0, at: Date.now() },
-    ];
-    saveLeaderboard(seed);
-    return seed;
-  }
-  return [];
 }
 
-function saveLeaderboard(entries: ScoreEntry[]) {
-  try {
-    localStorage.setItem(LB_KEY, JSON.stringify(entries.slice(0, LB_SIZE)));
-    if (entries[0]) saveHighScore(entries[0].score);
-  } catch {
-    /* ignore */
-  }
-}
+export type SubmitScoreFn = (entry: {
+  name: string;
+  score: number;
+  wave: number;
+}) => Promise<{
+  leaderboard: ScoreEntry[];
+  rank: number | null;
+  qualified: boolean;
+} | null>;
 
 function loadAimMode(): AimMode {
   try {
@@ -328,6 +314,10 @@ export class TankzEngine {
   nameCursor = 0;
   nameRank: number | null = null;
   pendingOutcome: "gameover" | "victory" | null = null;
+  scoreSubmitting = false;
+  boardSynced = false;
+  /** Injected by React shell — posts to shared Postgres leaderboard */
+  onSubmitScore: SubmitScoreFn | null = null;
 
   tiles: TileChar[][] = [];
   brickHp: number[][] = [];
@@ -428,11 +418,9 @@ export class TankzEngine {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2d context unavailable");
     this.ctx = ctx;
-    this.highScore = loadHighScore();
-    this.leaderboard = loadLeaderboard();
-    if (this.leaderboard[0]) {
-      this.highScore = Math.max(this.highScore, this.leaderboard[0].score);
-    }
+    // Seed from offline cache until server board arrives
+    this.leaderboard = loadCachedLeaderboard();
+    this.highScore = this.leaderboard[0]?.score ?? 0;
     this.aimMode = loadAimMode();
 
     for (let i = 0; i < MAX_BULLETS; i++) {
@@ -628,6 +616,8 @@ export class TankzEngine {
         this.score = Math.max(0, Math.floor(n));
         if (this.score > this.highScore) this.highScore = this.score;
       },
+      applyLeaderboard: (entries: ScoreEntry[]) =>
+        this.applyLeaderboard(entries, true),
     };
   }
 
@@ -1463,8 +1453,28 @@ export class TankzEngine {
     this.nameCursor = clamp(this.nameCursor, 0, this.nameDraft.length - 1);
   }
 
+  /** Apply global board from server (or offline cache). */
+  applyLeaderboard(entries: ScoreEntry[], synced = true) {
+    const next = [...entries]
+      .filter(
+        (e) => e && typeof e.score === "number" && typeof e.name === "string",
+      )
+      .map((e) => ({
+        name: String(e.name).toUpperCase().slice(0, NAME_MAX) || "AAA",
+        score: Math.max(0, Math.floor(e.score)),
+        wave: Math.max(0, Math.floor(e.wave || 0)),
+        at: e.at || Date.now(),
+      }))
+      .sort((a, b) => b.score - a.score || a.at - b.at)
+      .slice(0, LB_SIZE);
+    this.leaderboard = next;
+    this.highScore = next[0]?.score ?? this.highScore;
+    this.boardSynced = synced;
+    cacheLeaderboard(next);
+  }
+
   submitName() {
-    if (this.phase !== "enterName") return;
+    if (this.phase !== "enterName" || this.scoreSubmitting) return;
     let name = this.nameDraft
       .toUpperCase()
       .replace(/[^A-Z0-9]/g, "")
@@ -1478,21 +1488,61 @@ export class TankzEngine {
       wave: this.wave,
       at: Date.now(),
     };
-    const next = [...this.leaderboard, entry]
-      .sort((a, b) => b.score - a.score || a.at - b.at)
-      .slice(0, LB_SIZE);
-    this.leaderboard = next;
-    saveLeaderboard(next);
-    this.highScore = next[0]?.score ?? this.score;
-    this.nameRank =
-      next.findIndex(
-        (e) => e.name === entry.name && e.score === entry.score && e.at === entry.at,
-      ) + 1;
-    this.phase = this.pendingOutcome ?? "gameover";
-    this.message =
-      this.phase === "victory" ? "Sector Cleared" : "Mission Failed";
+
+    const finishLocal = (rank: number | null) => {
+      const next = [...this.leaderboard, entry]
+        .sort((a, b) => b.score - a.score || a.at - b.at)
+        .slice(0, LB_SIZE);
+      this.leaderboard = next;
+      this.highScore = next[0]?.score ?? this.score;
+      cacheLeaderboard(next);
+      this.nameRank =
+        rank ??
+        next.findIndex(
+          (e) =>
+            e.name === entry.name &&
+            e.score === entry.score &&
+            e.at === entry.at,
+        ) + 1;
+      this.phase = this.pendingOutcome ?? "gameover";
+      this.message =
+        this.phase === "victory" ? "Sector Cleared" : "Mission Failed";
+      this.messageT = 99;
+      this.scoreSubmitting = false;
+      sfx.pickup();
+    };
+
+    if (!this.onSubmitScore) {
+      finishLocal(null);
+      return;
+    }
+
+    this.scoreSubmitting = true;
+    this.message = "Saving score…";
     this.messageT = 99;
-    sfx.pickup();
+    void this.onSubmitScore({
+      name: entry.name,
+      score: entry.score,
+      wave: entry.wave,
+    })
+      .then((res) => {
+        if (res?.leaderboard) {
+          this.applyLeaderboard(res.leaderboard, true);
+          this.nameRank = res.rank;
+          this.phase = this.pendingOutcome ?? "gameover";
+          this.message =
+            this.phase === "victory" ? "Sector Cleared" : "Mission Failed";
+          this.messageT = 99;
+          this.scoreSubmitting = false;
+          sfx.pickup();
+          return;
+        }
+        finishLocal(null);
+      })
+      .catch(() => {
+        // Network / server failure — still record locally so the run isn't lost
+        finishLocal(null);
+      });
   }
 
   private acquireAutoTarget() {
@@ -2519,6 +2569,8 @@ export class TankzEngine {
       nameCursor: this.nameCursor,
       nameRank: this.nameRank,
       pendingOutcome: this.pendingOutcome,
+      scoreSubmitting: this.scoreSubmitting,
+      boardSynced: this.boardSynced,
     };
   }
 

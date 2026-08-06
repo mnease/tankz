@@ -9,6 +9,7 @@ import {
 } from "./engine";
 import { unlockAudio } from "./audio";
 import { GAME_VERSION, GAME_GITHUB_URL } from "./version";
+import { getLeaderboard, submitScore } from "@/lib/leaderboard";
 
 const TIP_XMONEY_URL = "https://x.com/i/money/pay/nease";
 const TIP_VENMO_URL = "https://venmo.com/u/nease";
@@ -38,6 +39,8 @@ const INITIAL_HUD: HudSnapshot = {
   nameCursor: 0,
   nameRank: null,
   pendingOutcome: null,
+  scoreSubmitting: false,
+  boardSynced: false,
 };
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
@@ -73,7 +76,32 @@ export function TankzGame() {
     if (!canvas) return;
     const engine = new TankzEngine(canvas);
     engineRef.current = engine;
+    engine.onSubmitScore = async (entry) => {
+      try {
+        return await submitScore({
+          data: {
+            name: entry.name,
+            score: entry.score,
+            wave: entry.wave,
+          },
+        });
+      } catch {
+        return null;
+      }
+    };
     engine.start();
+
+    // Load global leaderboard shared across all players
+    let cancelled = false;
+    void getLeaderboard()
+      .then((board) => {
+        if (cancelled || !engineRef.current) return;
+        engineRef.current.applyLeaderboard(board, true);
+        setHud(engineRef.current.getHud());
+      })
+      .catch(() => {
+        // Keep offline cache if server unreachable
+      });
 
     const id = window.setInterval(() => {
       setHud(engine.getHud());
@@ -120,6 +148,7 @@ export function TankzGame() {
     window.addEventListener("pointerup", onUp);
 
     return () => {
+      cancelled = true;
       window.clearInterval(id);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerleave", onLeave);
@@ -682,14 +711,18 @@ function NameEntry({
 
       <p className="text-center text-[11px] text-muted">
         Type letters · ←→ move · ↑↓ cycle · Enter confirm
+        <span className="mt-1 block text-subtle">
+          Saves to the global hall of fame
+        </span>
       </p>
 
       <button
         type="button"
         onClick={onSubmit}
-        className="w-full rounded-lg bg-fg px-4 py-3 text-sm font-semibold text-bg transition-transform active:scale-[0.98]"
+        disabled={hud.scoreSubmitting}
+        className="w-full rounded-lg bg-fg px-4 py-3 text-sm font-semibold text-bg transition-transform active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
       >
-        Register Score
+        {hud.scoreSubmitting ? "Saving…" : "Register Score"}
       </button>
     </div>
   );
@@ -796,7 +829,7 @@ function MenuContent({
         {hud.leaderboard.length > 0 && (
           <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">
             <p className="mb-2 text-center text-[10px] font-medium tracking-[0.18em] text-muted uppercase">
-              Hall of Fame
+              Hall of Fame{hud.boardSynced ? " · Global" : ""}
             </p>
             <Leaderboard entries={hud.leaderboard.slice(0, 5)} compact />
           </div>
@@ -933,7 +966,7 @@ function MenuContent({
         {hud.leaderboard.length > 0 && (
           <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">
             <p className="mb-2 text-center text-[10px] font-medium tracking-[0.18em] text-muted uppercase">
-              Hall of Fame
+              Hall of Fame{hud.boardSynced ? " · Global" : ""}
             </p>
             <Leaderboard
               entries={hud.leaderboard}
@@ -976,7 +1009,7 @@ function MenuContent({
       {hud.leaderboard.length > 0 && (
         <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">
           <p className="mb-2 text-center text-[10px] font-medium tracking-[0.18em] text-muted uppercase">
-            Hall of Fame
+            Hall of Fame{hud.boardSynced ? " · Global" : ""}
           </p>
           <Leaderboard
             entries={hud.leaderboard}
