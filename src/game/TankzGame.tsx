@@ -5,6 +5,7 @@ import {
   type GamePhase,
   type UpgradeId,
   type AimMode,
+  type PlayMode,
   type ScoreEntry,
 } from "./engine";
 import { unlockAudio } from "./audio";
@@ -90,10 +91,15 @@ const INITIAL_HUD: HudSnapshot = {
   upgradeChoices: null,
   upgrades: {},
   aimMode: "mouse",
+  playMode: "arcade",
   autoTarget: false,
   missilesUnlocked: false,
   missileReady: false,
   missileCd: 0,
+  ammo: -1,
+  magSize: 0,
+  reloadLeft: 0,
+  reloadDuration: 0,
   leaderboard: [],
   nameDraft: "AAA",
   nameCursor: 0,
@@ -114,6 +120,7 @@ type TouchState = {
   aimRight: boolean;
   fire: boolean;
   missile: boolean;
+  reload: boolean;
 };
 
 export function TankzGame() {
@@ -129,6 +136,7 @@ export function TankzGame() {
     aimRight: false,
     fire: false,
     missile: false,
+    reload: false,
   });
 
   useEffect(() => {
@@ -242,6 +250,12 @@ export function TankzGame() {
   const setAimMode = (mode: AimMode) => {
     unlockAudio();
     engineRef.current?.setAimMode(mode);
+    refreshHud();
+  };
+
+  const setPlayMode = (mode: PlayMode) => {
+    unlockAudio();
+    engineRef.current?.setPlayMode(mode);
     refreshHud();
   };
 
@@ -365,6 +379,24 @@ export function TankzGame() {
                   {hud.aimMode === "mouse" ? "Mouse" : "Keys"}
                 </span>
               </div>
+              <div className="rounded-md border border-border/50 bg-surface/60 px-2.5 py-1 text-[11px] text-muted backdrop-blur-sm">
+                {hud.playMode === "sim" ? "Sim" : "Arcade"}
+              </div>
+              {hud.playMode === "sim" && (
+                <div
+                  className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold tabular-nums tracking-wide uppercase ${
+                    hud.reloadLeft > 0
+                      ? "border-warn/50 bg-warn/15 text-warn"
+                      : hud.ammo <= 0
+                        ? "border-danger/50 bg-danger/15 text-danger"
+                        : "border-border/50 bg-surface/60 text-fg"
+                  }`}
+                >
+                  {hud.reloadLeft > 0
+                    ? `RLD ${hud.reloadLeft.toFixed(1)}`
+                    : `AMMO ${hud.ammo}/${hud.magSize}`}
+                </div>
+              )}
               {hud.autoTarget && (
                 <div className="rounded-md border border-accent/40 bg-accent/15 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-accent uppercase">
                   Lock
@@ -428,6 +460,7 @@ export function TankzGame() {
                       onPrimary={primary}
                       onPickUpgrade={pickUpgrade}
                       onSetAimMode={setAimMode}
+                      onSetPlayMode={setPlayMode}
                       onSubmitName={submitName}
                       onNameCycle={nameCycle}
                       onNameCursor={nameCursorMove}
@@ -500,9 +533,12 @@ export function TankzGame() {
 
       {phase === "playing" && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 rounded-full border border-border/50 bg-surface/70 px-3 py-1 text-[11px] text-muted backdrop-blur-sm md:block">
-          WASD move on screen ·{" "}
-          {hud.aimMode === "mouse" ? "Mouse aim" : "Q/E aim gun"} · Tab lock ·
-          Space fire
+          {hud.playMode === "sim"
+            ? "W/S throttle · A/D steer · "
+            : "WASD move on screen · "}
+          {hud.aimMode === "mouse" ? "Mouse aim" : "Q/E aim gun"}
+          {hud.playMode === "arcade" ? " · Tab lock" : ""} · Space fire
+          {hud.playMode === "sim" ? " · R reload" : ""}
           {hud.missilesUnlocked ? " · F missiles" : ""} · Esc
         </div>
       )}
@@ -569,13 +605,23 @@ export function TankzGame() {
               />
             </div>
             <div className="flex items-center gap-1.5">
-              <TouchBtn
-                label={hud.autoTarget ? "LOCK ON" : "LOCK"}
-                ariaLabel="Toggle auto target"
-                wide
-                onDown={toggleAutoTarget}
-                onUp={() => {}}
-              />
+              {hud.playMode === "sim" ? (
+                <TouchBtn
+                  label={hud.reloadLeft > 0 ? "…" : "RLD"}
+                  ariaLabel="Reload magazine"
+                  wide
+                  onDown={() => setTouch("reload", true)}
+                  onUp={() => setTouch("reload", false)}
+                />
+              ) : (
+                <TouchBtn
+                  label={hud.autoTarget ? "LOCK ON" : "LOCK"}
+                  ariaLabel="Toggle auto target"
+                  wide
+                  onDown={toggleAutoTarget}
+                  onUp={() => {}}
+                />
+              )}
               {hud.missilesUnlocked && (
                 <TouchBtn
                   label={hud.missileReady ? "MSL" : "…"}
@@ -895,9 +941,54 @@ function AimModeToggle({
         </button>
       </div>
       <p className="text-center text-[10px] text-subtle">
-        Press <span className="font-mono text-muted">M</span> to switch aim ·{" "}
-        <span className="font-mono text-muted">Tab</span> auto-target
+        Press <span className="font-mono text-muted">M</span> to switch aim
       </p>
+    </div>
+  );
+}
+
+function PlayModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: PlayMode;
+  onChange: (m: PlayMode) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-center text-[11px] font-medium tracking-[0.14em] text-muted uppercase">
+        Play mode
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => onChange("arcade")}
+          className={`rounded-lg border px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+            mode === "arcade"
+              ? "border-accent/50 bg-accent/15 text-fg"
+              : "border-border bg-surface-2 text-muted hover:border-border hover:text-fg"
+          }`}
+        >
+          Arcade Light
+          <span className="mt-0.5 block text-[10px] font-normal leading-snug opacity-70">
+            Screen move · infinite shells · auto-target
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange("sim")}
+          className={`rounded-lg border px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+            mode === "sim"
+              ? "border-accent/50 bg-accent/15 text-fg"
+              : "border-border bg-surface-2 text-muted hover:border-border hover:text-fg"
+          }`}
+        >
+          Tank Sim
+          <span className="mt-0.5 block text-[10px] font-normal leading-snug opacity-70">
+            Hull steer · magazine · R reload
+          </span>
+        </button>
+      </div>
     </div>
   );
 }
@@ -908,6 +999,7 @@ function MenuContent({
   onPrimary,
   onPickUpgrade,
   onSetAimMode,
+  onSetPlayMode,
   onSubmitName,
   onNameCycle,
   onNameCursor,
@@ -919,6 +1011,7 @@ function MenuContent({
   onPrimary: () => void;
   onPickUpgrade: (id: UpgradeId) => void;
   onSetAimMode: (mode: AimMode) => void;
+  onSetPlayMode: (mode: PlayMode) => void;
   onSubmitName: () => void;
   onNameCycle: (d: number) => void;
   onNameCursor: (d: number) => void;
@@ -927,6 +1020,7 @@ function MenuContent({
   showInlineLeaderboard?: boolean;
 }) {
   if (phase === "title") {
+    const sim = hud.playMode === "sim";
     return (
       <div className="max-h-[min(88dvh,820px)] space-y-4 overflow-y-auto pr-0.5">
         <div className="space-y-2">
@@ -940,18 +1034,33 @@ function MenuContent({
             Tankz
           </h1>
           <p className="max-w-sm text-sm leading-relaxed text-muted">
-            Move with WASD on the screen, aim the gun separately. Clear waves,
-            kit out your tank, and claim a spot on the hall of fame.
+            {sim
+              ? "Tank-relative drive, limited magazines, and manual reloads. Heavier, deliberate combat."
+              : "Screen-space movement, infinite shells, and snappy arcade combat. Claim the hall of fame."}
           </p>
         </div>
+        <PlayModeToggle mode={hud.playMode} onChange={onSetPlayMode} />
         <AimModeToggle mode={hud.aimMode} onChange={onSetAimMode} />
         <div className="grid grid-cols-2 gap-2 text-xs text-muted">
-          <Hint k="WASD" v="Move (screen)" />
-          <Hint k="Mouse / Q E" v="Aim gun" />
-          <Hint k="Space" v="Fire cannon" />
-          <Hint k="F" v="Missiles" />
-          <Hint k="Tab" v="Auto-target" />
-          <Hint k="M" v="Aim mode" />
+          {sim ? (
+            <>
+              <Hint k="W / S" v="Throttle / reverse" />
+              <Hint k="A / D" v="Steer hull" />
+              <Hint k="Space" v="Fire shell" />
+              <Hint k="R" v="Reload mag" />
+              <Hint k="Mouse / Q E" v="Aim gun" />
+              <Hint k="F" v="Missiles" />
+            </>
+          ) : (
+            <>
+              <Hint k="WASD" v="Move (screen)" />
+              <Hint k="Mouse / Q E" v="Aim gun" />
+              <Hint k="Space" v="Fire cannon" />
+              <Hint k="F" v="Missiles" />
+              <Hint k="Tab" v="Auto-target" />
+              <Hint k="M" v="Aim mode" />
+            </>
+          )}
         </div>
         {showInlineLeaderboard && hud.leaderboard.length > 0 && (
           <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">

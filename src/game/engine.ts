@@ -41,6 +41,9 @@ export interface UpgradeChoice {
 
 export type AimMode = "keys" | "mouse";
 
+/** Arcade light = snappy twin-stick feel; sim = magazine + tank-relative drive */
+export type PlayMode = "arcade" | "sim";
+
 export interface ScoreEntry {
   name: string;
   score: number;
@@ -63,10 +66,17 @@ export interface HudSnapshot {
   upgradeChoices: UpgradeChoice[] | null;
   upgrades: Partial<Record<UpgradeId, number>>;
   aimMode: AimMode;
+  playMode: PlayMode;
   autoTarget: boolean;
   missilesUnlocked: boolean;
   missileReady: boolean;
   missileCd: number;
+  /** Shells in magazine (−1 = infinite arcade) */
+  ammo: number;
+  magSize: number;
+  /** 0 = ready; >0 = reloading seconds left (sim only) */
+  reloadLeft: number;
+  reloadDuration: number;
   leaderboard: ScoreEntry[];
   /** Arcade name entry draft (3–8 chars) */
   nameDraft: string;
@@ -209,11 +219,16 @@ const MAX_PARTICLES = 220;
 const MAX_EXPLOSIONS = 16;
 const MAX_ENEMIES = 10;
 const AIM_KEY = "tankz-aim-mode-v1";
+const MODE_KEY = "tankz-play-mode-v1";
 const LB_CACHE_KEY = "tankz-leaderboard-cache-v2";
 const NAME_MAX = 8;
 const NAME_MIN = 3;
 const LB_SIZE = 10;
 const NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789·";
+/** Base magazine size in sim mode */
+const SIM_MAG_BASE = 6;
+/** Base full-magazine reload time (seconds) in sim */
+const SIM_RELOAD_BASE = 1.75;
 
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
@@ -292,6 +307,24 @@ function saveAimMode(mode: AimMode) {
   }
 }
 
+function loadPlayMode(): PlayMode {
+  try {
+    const v = localStorage.getItem(MODE_KEY);
+    if (v === "arcade" || v === "sim") return v;
+  } catch {
+    /* ignore */
+  }
+  return "arcade";
+}
+
+function savePlayMode(mode: PlayMode) {
+  try {
+    localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    /* ignore */
+  }
+}
+
 export class TankzEngine {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
@@ -361,6 +394,10 @@ export class TankzEngine {
     missileHome: 0,
     missileSplash: 0,
     missileCount: 1,
+    /** Sim magazine capacity (0 = arcade infinite) */
+    magSize: 0,
+    /** Sim full-mag reload duration */
+    reloadTime: 0,
   };
   upgrades: Partial<Record<UpgradeId, number>> = {};
   upgradeChoices: UpgradeChoice[] | null = null;
@@ -376,9 +413,18 @@ export class TankzEngine {
   mouseRightDown = false;
   /** Explicit aim control scheme */
   aimMode: AimMode = "mouse";
-  /** Tab toggles soft lock — turret tracks nearest hostile */
+  /** Arcade light vs stricter tank sim */
+  playMode: PlayMode = "arcade";
+  /** Tab toggles soft lock — turret tracks nearest hostile (arcade; limited in sim) */
   autoTarget = false;
   autoTargetId: number | null = null;
+
+  /** Sim magazine (ignored in arcade) */
+  mag = SIM_MAG_BASE;
+  magSize = SIM_MAG_BASE;
+  /** Seconds remaining on manual reload; 0 = not reloading */
+  reloadLeft = 0;
+  reloadDuration = SIM_RELOAD_BASE;
 
   touch = {
     left: false,
@@ -389,6 +435,7 @@ export class TankzEngine {
     aimRight: false,
     fire: false,
     missile: false,
+    reload: false,
   };
 
   images: {
@@ -423,6 +470,7 @@ export class TankzEngine {
     this.leaderboard = loadCachedLeaderboard();
     this.highScore = this.leaderboard[0]?.score ?? 0;
     this.aimMode = loadAimMode();
+    this.playMode = loadPlayMode();
 
     for (let i = 0; i < MAX_BULLETS; i++) {
       this.bullets.push({
@@ -724,27 +772,70 @@ export class TankzEngine {
     this.autoTarget = false;
     this.autoTargetId = null;
     this.missileFireCd = 0;
-    this.run = {
-      maxHealth: 3,
-      maxSpeed: 165,
-      accel: 320,
-      fireRate: 0.32,
-      bulletDamage: 1,
-      bulletSpeed: 420,
-      hullTurn: 2.6,
-      turretTurn: 3.4,
-      missiles: false,
-      missileDamage: 2,
-      missileSpeed: 280,
-      missileCd: 1.35,
-      missileHome: 0,
-      missileSplash: 0,
-      missileCount: 1,
-    };
+    this.reloadLeft = 0;
+    if (this.playMode === "sim") {
+      this.run = {
+        maxHealth: 3,
+        maxSpeed: 140,
+        accel: 240,
+        fireRate: 0.38,
+        bulletDamage: 1,
+        bulletSpeed: 400,
+        hullTurn: 1.85,
+        turretTurn: 2.7,
+        missiles: false,
+        missileDamage: 2,
+        missileSpeed: 260,
+        missileCd: 1.55,
+        missileHome: 0,
+        missileSplash: 0,
+        missileCount: 1,
+        magSize: SIM_MAG_BASE,
+        reloadTime: SIM_RELOAD_BASE,
+      };
+      this.magSize = SIM_MAG_BASE;
+      this.mag = SIM_MAG_BASE;
+      this.reloadDuration = SIM_RELOAD_BASE;
+    } else {
+      this.run = {
+        maxHealth: 3,
+        maxSpeed: 165,
+        accel: 320,
+        fireRate: 0.32,
+        bulletDamage: 1,
+        bulletSpeed: 420,
+        hullTurn: 2.6,
+        turretTurn: 3.4,
+        missiles: false,
+        missileDamage: 2,
+        missileSpeed: 280,
+        missileCd: 1.35,
+        missileHome: 0,
+        missileSplash: 0,
+        missileCount: 1,
+        magSize: 0,
+        reloadTime: 0,
+      };
+      this.magSize = 0;
+      this.mag = -1;
+      this.reloadDuration = 0;
+    }
     this.phase = "playing";
     this.loadLevel(0);
     this.applyRunStatsToPlayer(true);
     this.beginWave();
+  }
+
+  setPlayMode(mode: PlayMode) {
+    this.playMode = mode;
+    savePlayMode(mode);
+    if (mode === "sim") {
+      this.autoTarget = false;
+      this.autoTargetId = null;
+    }
+    this.message =
+      mode === "arcade" ? "Mode: Arcade Light" : "Mode: Tank Sim";
+    this.messageT = 1.5;
   }
 
   private loadLevel(idx: number) {
@@ -854,7 +945,10 @@ export class TankzEngine {
       {
         id: "reload",
         name: "Autoloader",
-        desc: "Faster cannon reload",
+        desc:
+          this.playMode === "sim"
+            ? "Faster mag reload · +1 capacity"
+            : "Faster rate of fire",
         max: 5,
       },
       {
@@ -973,7 +1067,19 @@ export class TankzEngine {
         this.run.accel *= 1.15;
         break;
       case "reload":
-        this.run.fireRate = Math.max(0.1, this.run.fireRate * 0.82);
+        if (this.playMode === "sim") {
+          this.run.reloadTime = Math.max(
+            0.7,
+            this.run.reloadTime * 0.82,
+          );
+          this.reloadDuration = this.run.reloadTime;
+          this.run.magSize = Math.min(12, this.run.magSize + 1);
+          this.magSize = this.run.magSize;
+          // Don't empty the gun mid-fight — top up one free shell
+          this.mag = Math.min(this.magSize, this.mag + 1);
+        } else {
+          this.run.fireRate = Math.max(0.1, this.run.fireRate * 0.82);
+        }
         break;
       case "caliber":
         this.run.bulletDamage += 1;
@@ -1101,6 +1207,24 @@ export class TankzEngine {
     if (p.invuln > 0) p.invuln -= dt;
     if (p.fireCd > 0) p.fireCd -= dt;
 
+    // Sim magazine reload
+    if (this.playMode === "sim" && this.reloadLeft > 0) {
+      this.reloadLeft -= dt;
+      if (this.reloadLeft <= 0) {
+        this.reloadLeft = 0;
+        this.mag = this.magSize;
+        this.message = "Magazine loaded";
+        this.messageT = 0.9;
+        sfx.pickup();
+      }
+    } else if (this.playMode === "sim") {
+      const wantReload =
+        this.keys.has("KeyR") || this.touch.reload;
+      if (wantReload && this.mag < this.magSize) {
+        this.beginReload();
+      }
+    }
+
     // ── Turret aim input ──
     let turretSteer = 0;
     if (this.injectTurret != null) {
@@ -1129,30 +1253,55 @@ export class TankzEngine {
     // Inject path keeps tank-relative controls for QA probes
     const useInject =
       this.injectSteer != null || this.injectThrottle != null;
+    const tankRelative =
+      useInject || this.playMode === "sim";
 
-    if (useInject) {
-      const hullSteer = this.injectSteer ?? 0;
-      const throttle = this.injectThrottle ?? 0;
+    if (tankRelative) {
+      // ── Tank-relative drive (sim + QA inject) ──
+      // W = throttle forward, S = reverse, A/D = steer hull
+      let hullSteer = this.injectSteer ?? 0;
+      let throttle = this.injectThrottle ?? 0;
+      if (!useInject) {
+        hullSteer = 0;
+        throttle = 0;
+        if (this.keys.has("KeyA") || this.touch.left) hullSteer += 1;
+        if (this.keys.has("KeyD") || this.touch.right) hullSteer -= 1;
+        if (this.keys.has("KeyW") || this.touch.up) throttle += 1;
+        if (this.keys.has("KeyS") || this.touch.down) throttle -= 1;
+        if (this.aimMode !== "keys") {
+          if (this.keys.has("ArrowLeft")) hullSteer += 1;
+          if (this.keys.has("ArrowRight")) hullSteer -= 1;
+          if (this.keys.has("ArrowUp")) throttle += 1;
+          if (this.keys.has("ArrowDown")) throttle -= 1;
+        }
+      }
       const speedRatio = Math.min(1, Math.abs(p.speed) / Math.max(40, maxSpeed));
-      const turnMul = 1.2 - 0.65 * speedRatio;
+      // Heavier at speed in sim
+      const turnMul =
+        this.playMode === "sim"
+          ? 1.05 - 0.72 * speedRatio
+          : 1.2 - 0.65 * speedRatio;
       p.hullAngle = wrapAngle(
         p.hullAngle + hullSteer * hullTurnRate * turnMul * dt,
       );
-      if (Math.abs(hullSteer) > 0.4 && Math.abs(p.speed) > 35) {
-        p.speed *= Math.exp(-1.35 * Math.abs(hullSteer) * dt);
+      if (Math.abs(hullSteer) > 0.4 && Math.abs(p.speed) > 30) {
+        p.speed *= Math.exp(
+          -(this.playMode === "sim" ? 1.7 : 1.35) * Math.abs(hullSteer) * dt,
+        );
       }
-      const reverseMax = maxSpeed * 0.42;
+      const reverseMax = maxSpeed * (this.playMode === "sim" ? 0.38 : 0.42);
+      const coast = this.playMode === "sim" ? 2.4 : 3.6;
       if (throttle > 0) p.speed += throttle * accel * dt;
-      else if (throttle < 0) p.speed += throttle * accel * 0.62 * dt;
+      else if (throttle < 0) p.speed += throttle * accel * 0.58 * dt;
       else {
-        p.speed *= Math.exp(-3.6 * dt);
+        p.speed *= Math.exp(-coast * dt);
         if (Math.abs(p.speed) < 5) p.speed = 0;
       }
       p.speed = clamp(p.speed, -reverseMax, maxSpeed);
       this.moveTank(p, dt);
       this.spawnTrackDust(p, hullSteer, dt);
     } else {
-      // ── Screen-relative drive (natural WASD) ──
+      // ── Screen-relative drive (arcade) ──
       // W/↑ = up on screen (−Y), S/↓ = down (+Y), A/← = left (−X), D/→ = right (+X)
       // Hull auto-faces the push direction so "forward" always matches the keys.
       let ix = 0;
@@ -1161,8 +1310,6 @@ export class TankzEngine {
       if (this.keys.has("KeyD") || this.touch.right) ix += 1;
       if (this.keys.has("KeyW") || this.touch.up) iy -= 1;
       if (this.keys.has("KeyS") || this.touch.down) iy += 1;
-      // Arrow keys reserved for aim in keys mode; still allow arrows for move
-      // only when not in keys-aim mode so arrows don't double-duty badly
       if (this.aimMode !== "keys") {
         if (this.keys.has("ArrowLeft")) ix -= 1;
         if (this.keys.has("ArrowRight")) ix += 1;
@@ -1177,7 +1324,6 @@ export class TankzEngine {
         wantMove = true;
         ix /= len;
         iy /= len;
-        // Same basis as forwardFromAngle inverse: angle 0 = north (−Y)
         desiredHeading = Math.atan2(-ix, -iy);
       }
 
@@ -1187,29 +1333,24 @@ export class TankzEngine {
           1,
           Math.abs(p.speed) / Math.max(40, maxSpeed),
         );
-        // Pivot faster when nearly stopped so redirects feel snappy
         const turnMul = 1.35 - 0.55 * speedRatio;
         const maxTurn = hullTurnRate * turnMul;
         p.hullAngle = wrapAngle(
           p.hullAngle + clamp(da, -maxTurn * dt, maxTurn * dt),
         );
 
-        // Drive only once roughly facing the stick (no sideways skate)
         const face = Math.cos(wrapAngle(desiredHeading - p.hullAngle));
         const drive = face > 0.15 ? Math.max(0.2, face) : 0.08;
         p.speed += accel * drive * dt;
 
-        // Hard misalignment scrub
         if (Math.abs(da) > 0.55 && Math.abs(p.speed) > 40) {
           p.speed *= Math.exp(-1.6 * dt);
         }
       } else {
-        // Coast / brake when stick released
         p.speed *= Math.exp(-4.0 * dt);
         if (Math.abs(p.speed) < 6) p.speed = 0;
       }
 
-      // No reverse gear in screen-relative mode — S means "go down the map"
       p.speed = clamp(p.speed, 0, maxSpeed);
 
       this.moveTank(p, dt);
@@ -1301,6 +1442,13 @@ export class TankzEngine {
   }
 
   toggleAutoTarget() {
+    if (this.playMode === "sim") {
+      this.autoTarget = false;
+      this.autoTargetId = null;
+      this.message = "Auto-Target disabled in Tank Sim";
+      this.messageT = 1.4;
+      return;
+    }
     this.autoTarget = !this.autoTarget;
     if (!this.autoTarget) {
       this.autoTargetId = null;
@@ -1314,6 +1462,17 @@ export class TankzEngine {
           : "Auto-Target — no hostiles";
     }
     this.messageT = 1.3;
+  }
+
+  /** Start a full magazine reload (sim only). */
+  beginReload() {
+    if (this.playMode !== "sim") return;
+    if (this.reloadLeft > 0) return;
+    if (this.mag >= this.magSize) return;
+    this.reloadLeft = this.run.reloadTime;
+    this.reloadDuration = this.run.reloadTime;
+    this.message = "Reloading…";
+    this.messageT = this.reloadLeft;
   }
 
   // ─── Arcade high scores ───────────────────────────────
@@ -2048,7 +2207,22 @@ export class TankzEngine {
 
   private tryFire(t: Tank) {
     if (!t.alive || t.fireCd > 0) return;
+    // Player sim: magazine + no fire while reloading
+    if (t.team === "player" && this.playMode === "sim") {
+      if (this.reloadLeft > 0) return;
+      if (this.mag <= 0) {
+        this.beginReload();
+        return;
+      }
+    }
     t.fireCd = t.fireRate;
+    if (t.team === "player" && this.playMode === "sim") {
+      this.mag -= 1;
+      if (this.mag <= 0) {
+        // Auto-start reload when dry
+        this.beginReload();
+      }
+    }
     const { x: fx, y: fy } = forwardFromAngle(t.turretAngle);
     const muzzle = t.radius + 12;
     const bx = t.x + fx * muzzle;
@@ -2397,6 +2571,10 @@ export class TankzEngine {
           t.bulletSpeed = this.run.bulletSpeed;
           t.alive = true;
           t.invuln = 2.2;
+          if (this.playMode === "sim") {
+            this.reloadLeft = 0;
+            this.mag = this.magSize;
+          }
           this.powerKind = null;
           this.powerTimer = 0;
           this.message = "Respawning";
@@ -2577,10 +2755,16 @@ export class TankzEngine {
       upgradeChoices: this.phase === "upgrade" ? this.upgradeChoices : null,
       upgrades: { ...this.upgrades },
       aimMode: this.aimMode,
+      playMode: this.playMode,
       autoTarget: this.autoTarget,
       missilesUnlocked: this.run.missiles,
       missileReady: this.run.missiles && this.missileFireCd <= 0,
       missileCd: this.missileFireCd,
+      ammo: this.playMode === "sim" ? this.mag : -1,
+      magSize: this.playMode === "sim" ? this.magSize : 0,
+      reloadLeft: this.playMode === "sim" ? Math.max(0, this.reloadLeft) : 0,
+      reloadDuration:
+        this.playMode === "sim" ? this.reloadDuration || this.run.reloadTime : 0,
       leaderboard: this.leaderboard.slice(),
       nameDraft: this.nameDraft,
       nameCursor: this.nameCursor,
