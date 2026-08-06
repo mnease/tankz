@@ -9,7 +9,11 @@ import {
   type ScoreEntry,
 } from "./engine";
 import { unlockAudio } from "./audio";
-import { GAME_VERSION, GAME_GITHUB_URL } from "./version";
+import {
+  GAME_VERSION,
+  GAME_GITHUB_URL,
+  GAME_FEEDBACK_URL,
+} from "./version";
 import type { LeaderboardEntry } from "@/lib/leaderboard";
 
 async function loadGlobalBoard(): Promise<{
@@ -503,7 +507,16 @@ export function TankzGame() {
                           <span className="sr-only">Copyright </span>©{" "}
                           {new Date().getFullYear()} NeaseMedia
                         </p>
-                        <div className="flex items-center gap-2 text-[11px] text-subtle">
+                        <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-[11px] text-subtle">
+                          <a
+                            href={GAME_FEEDBACK_URL}
+                            className="text-muted underline-offset-2 transition-colors hover:text-fg hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                          >
+                            Send feedback
+                          </a>
+                          <span className="text-border" aria-hidden="true">
+                            ·
+                          </span>
                           <span
                             className="font-mono tabular-nums tracking-wide text-muted"
                             aria-label={`Game version ${GAME_VERSION}`}
