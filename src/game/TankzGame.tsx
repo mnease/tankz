@@ -1079,7 +1079,7 @@ function MenuContent({
           <p className="max-w-sm text-sm leading-relaxed text-muted">
             {sim
               ? "Tank-relative drive, limited magazines, and manual reloads. Heavier, deliberate combat."
-              : "Screen-space movement, infinite shells, and snappy arcade combat. Claim the hall of fame."}
+              : "Blast your way to victory! Countless levels of nonstop fun. Can you make it to the top?"}
           </p>
         </div>
         <PlayModeToggle mode={hud.playMode} onChange={onSetPlayMode} />

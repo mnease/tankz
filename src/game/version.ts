@@ -1,5 +1,5 @@
 /** Game semver — bump patch (x.y.Z) on every player-facing ship */
-export const GAME_VERSION = "1.2.7";
+export const GAME_VERSION = "1.2.8";
 
 export const GAME_GITHUB_URL = "https://github.com/mnease/tankz";
 
