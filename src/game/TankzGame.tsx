@@ -1308,21 +1308,26 @@ function TipTheMaker({ compact }: { compact?: boolean }) {
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        className={`inline-flex items-center justify-center gap-2 rounded-lg border border-accent/40 bg-accent/15 px-3 font-semibold text-accent transition-colors hover:bg-accent/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent active:scale-[0.98] ${
-          compact ? "w-full py-2 text-sm" : "w-full py-2.5 text-sm sm:w-auto"
-        }`}
-      >
-        <span aria-hidden="true" className="text-base">
-          ✦
-        </span>
-        Tip the Game Maker
-      </button>
+      <div className={compact ? "w-full" : "w-full sm:w-auto"}>
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          className={`inline-flex items-center justify-center gap-2 rounded-lg border border-accent/40 bg-accent/15 px-3 font-semibold text-accent transition-colors hover:bg-accent/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent active:scale-[0.98] ${
+            compact ? "w-full py-2 text-sm" : "w-full py-2.5 text-sm sm:w-auto"
+          }`}
+        >
+          <span aria-hidden="true" className="text-base">
+            ✦
+          </span>
+          Tip the Game Maker
+        </button>
+        <p className="mt-1.5 max-w-[16rem] text-[11px] leading-snug text-subtle">
+          Free to play — tips are appreciated if you enjoy it.
+        </p>
+      </div>
 
       {open && (
         <div
@@ -1354,8 +1359,8 @@ function TipTheMaker({ compact }: { compact?: boolean }) {
                   id="tip-dialog-desc"
                   className="mt-1 text-xs leading-relaxed text-muted"
                 >
-                  Thanks for playing Tankz — choose xMoney or Venmo to send a
-                  tip. Links open in a new tab.
+                  Tankz is free to play. Tips are appreciated if you enjoy it —
+                  choose xMoney or Venmo. Links open in a new tab.
                 </p>
               </div>
               <button
