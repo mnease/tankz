@@ -9,6 +9,7 @@ import {
   type ScoreEntry,
 } from "./engine";
 import { unlockAudio } from "./audio";
+import { Link } from "@tanstack/react-router";
 import {
   GAME_VERSION,
   GAME_GITHUB_URL,
@@ -508,6 +509,24 @@ export function TankzGame() {
                           {new Date().getFullYear()} NeaseMedia
                         </p>
                         <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-[11px] text-subtle">
+                          <Link
+                            to="/privacy"
+                            className="text-muted underline-offset-2 transition-colors hover:text-fg hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                          >
+                            Privacy
+                          </Link>
+                          <span className="text-border" aria-hidden="true">
+                            ·
+                          </span>
+                          <Link
+                            to="/terms"
+                            className="text-muted underline-offset-2 transition-colors hover:text-fg hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                          >
+                            Terms
+                          </Link>
+                          <span className="text-border" aria-hidden="true">
+                            ·
+                          </span>
                           <a
                             href={GAME_FEEDBACK_URL}
                             className="text-muted underline-offset-2 transition-colors hover:text-fg hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
