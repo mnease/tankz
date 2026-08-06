@@ -5,6 +5,7 @@ import {
   type GamePhase,
   type UpgradeId,
   type AimMode,
+  type ScoreEntry,
 } from "./engine";
 import { unlockAudio } from "./audio";
 
@@ -27,7 +28,14 @@ const INITIAL_HUD: HudSnapshot = {
   missilesUnlocked: false,
   missileReady: false,
   missileCd: 0,
+  leaderboard: [],
+  nameDraft: "AAA",
+  nameCursor: 0,
+  nameRank: null,
+  pendingOutcome: null,
 };
+
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
 
 type TouchState = {
   left: boolean;
@@ -133,6 +141,10 @@ export function TankzGame() {
     [syncTouch],
   );
 
+  const refreshHud = () => {
+    if (engineRef.current) setHud(engineRef.current.getHud());
+  };
+
   const primary = () => {
     unlockAudio();
     engineRef.current?.handlePrimaryAction();
@@ -146,13 +158,37 @@ export function TankzGame() {
   const setAimMode = (mode: AimMode) => {
     unlockAudio();
     engineRef.current?.setAimMode(mode);
-    setHud(engineRef.current?.getHud() ?? INITIAL_HUD);
+    refreshHud();
   };
 
   const toggleAutoTarget = () => {
     unlockAudio();
     engineRef.current?.toggleAutoTarget();
-    setHud(engineRef.current?.getHud() ?? INITIAL_HUD);
+    refreshHud();
+  };
+
+  const submitName = () => {
+    unlockAudio();
+    engineRef.current?.submitName();
+    refreshHud();
+  };
+
+  const nameCycle = (d: number) => {
+    unlockAudio();
+    engineRef.current?.nameCycle(d);
+    refreshHud();
+  };
+
+  const nameCursorMove = (d: number) => {
+    unlockAudio();
+    engineRef.current?.nameCursorMove(d);
+    refreshHud();
+  };
+
+  const nameType = (ch: string) => {
+    unlockAudio();
+    engineRef.current?.nameType(ch);
+    refreshHud();
   };
 
   const phase = hud.phase;
@@ -162,6 +198,7 @@ export function TankzGame() {
     phase === "victory" ||
     phase === "waveClear" ||
     phase === "upgrade" ||
+    phase === "enterName" ||
     phase === "paused";
 
   return (
@@ -172,7 +209,7 @@ export function TankzGame() {
         style={{ touchAction: "none" }}
       />
 
-      {phase !== "title" && (
+      {phase !== "title" && phase !== "enterName" && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 sm:p-4">
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-2 rounded-md border border-border/80 bg-surface/80 px-3 py-1.5 backdrop-blur-sm">
@@ -271,7 +308,9 @@ export function TankzGame() {
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-bg/55 p-4 backdrop-blur-[2px]">
           <div
             className={`w-full border border-border bg-surface/95 p-6 shadow-[0_24px_80px_rgba(0,0,0,0.45)] sm:p-8 ${
-              phase === "upgrade" ? "max-w-2xl rounded-xl" : "max-w-md rounded-xl"
+              phase === "upgrade" || phase === "enterName"
+                ? "max-w-2xl rounded-xl"
+                : "max-w-md rounded-xl"
             }`}
           >
             <MenuContent
@@ -280,6 +319,10 @@ export function TankzGame() {
               onPrimary={primary}
               onPickUpgrade={pickUpgrade}
               onSetAimMode={setAimMode}
+              onSubmitName={submitName}
+              onNameCycle={nameCycle}
+              onNameCursor={nameCursorMove}
+              onNameType={nameType}
             />
           </div>
         </div>
@@ -421,6 +464,171 @@ function HealthPips({ health, max }: { health: number; max: number }) {
   );
 }
 
+function Leaderboard({
+  entries,
+  highlight,
+  compact,
+}: {
+  entries: ScoreEntry[];
+  highlight?: { name: string; score: number } | null;
+  compact?: boolean;
+}) {
+  if (!entries.length) {
+    return (
+      <p className="text-center text-xs text-muted">
+        No high scores yet — be the first ACE.
+      </p>
+    );
+  }
+  return (
+    <div className={`space-y-1 ${compact ? "" : ""}`}>
+      <div className="mb-1.5 grid grid-cols-[2rem_1fr_auto_auto] gap-2 px-1 text-[10px] font-medium tracking-[0.14em] text-muted uppercase">
+        <span>#</span>
+        <span>Name</span>
+        <span className="text-right">Wave</span>
+        <span className="text-right">Score</span>
+      </div>
+      {entries.map((e, i) => {
+        const isHi =
+          highlight &&
+          e.name === highlight.name &&
+          e.score === highlight.score;
+        return (
+          <div
+            key={`${e.name}-${e.score}-${e.at}-${i}`}
+            className={`grid grid-cols-[2rem_1fr_auto_auto] items-center gap-2 rounded-md px-1.5 py-1.5 font-mono text-sm tabular-nums ${
+              isHi
+                ? "border border-accent/40 bg-accent/10 text-accent"
+                : "text-fg/90"
+            }`}
+          >
+            <span className="text-muted">{String(i + 1).padStart(2, "0")}</span>
+            <span className="font-semibold tracking-[0.18em]">{e.name}</span>
+            <span className="text-right text-muted">{e.wave || "—"}</span>
+            <span className="min-w-[4.5rem] text-right font-semibold">
+              {e.score.toLocaleString()}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function NameEntry({
+  hud,
+  onSubmit,
+  onCycle,
+  onCursor,
+  onType,
+}: {
+  hud: HudSnapshot;
+  onSubmit: () => void;
+  onCycle: (d: number) => void;
+  onCursor: (d: number) => void;
+  onType: (ch: string) => void;
+}) {
+  const chars = hud.nameDraft.padEnd(3, "A").split("").slice(0, 8);
+  return (
+    <div className="space-y-5">
+      <div className="space-y-1 text-center">
+        <p className="text-[11px] font-medium tracking-[0.22em] text-accent uppercase">
+          New High Score
+        </p>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          Enter Initials
+        </h2>
+        <p className="font-mono text-sm tabular-nums text-muted">
+          {hud.score.toLocaleString()} pts
+          {hud.nameRank != null ? ` · Rank #${hud.nameRank}` : ""}
+        </p>
+      </div>
+
+      {/* Letter slots */}
+      <div className="flex items-center justify-center gap-2">
+        {chars.map((ch, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => {
+              // focus this slot by moving cursor via cycles of move
+              const delta = i - hud.nameCursor;
+              if (delta !== 0) onCursor(delta);
+            }}
+            className={`flex h-14 w-12 flex-col items-center justify-center rounded-lg border font-mono text-2xl font-bold tracking-widest transition-colors ${
+              i === hud.nameCursor
+                ? "border-accent bg-accent/15 text-accent shadow-[0_0_20px_rgba(94,234,212,0.15)]"
+                : "border-border bg-surface-2 text-fg"
+            }`}
+          >
+            {ch}
+            {i === hud.nameCursor && (
+              <span className="mt-0.5 h-0.5 w-6 animate-pulse rounded-full bg-accent" />
+            )}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => onCursor(-1)}
+          className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-muted"
+        >
+          ◀
+        </button>
+        <button
+          type="button"
+          onClick={() => onCycle(1)}
+          className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-muted"
+        >
+          ▲
+        </button>
+        <button
+          type="button"
+          onClick={() => onCycle(-1)}
+          className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-muted"
+        >
+          ▼
+        </button>
+        <button
+          type="button"
+          onClick={() => onCursor(1)}
+          className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-muted"
+        >
+          ▶
+        </button>
+      </div>
+
+      {/* Letter pad for touch */}
+      <div className="grid grid-cols-9 gap-1 sm:grid-cols-12">
+        {LETTERS.map((ch) => (
+          <button
+            key={ch}
+            type="button"
+            onClick={() => onType(ch)}
+            className="rounded-md border border-border/70 bg-surface-2 py-2 font-mono text-xs font-semibold text-fg hover:border-accent/40 hover:bg-bg active:scale-95"
+          >
+            {ch}
+          </button>
+        ))}
+      </div>
+
+      <p className="text-center text-[11px] text-muted">
+        Type letters · ←→ move · ↑↓ cycle · Enter confirm
+      </p>
+
+      <button
+        type="button"
+        onClick={onSubmit}
+        className="w-full rounded-lg bg-fg px-4 py-3 text-sm font-semibold text-bg transition-transform active:scale-[0.98]"
+      >
+        Register Score
+      </button>
+    </div>
+  );
+}
+
 function AimModeToggle({
   mode,
   onChange,
@@ -477,16 +685,24 @@ function MenuContent({
   onPrimary,
   onPickUpgrade,
   onSetAimMode,
+  onSubmitName,
+  onNameCycle,
+  onNameCursor,
+  onNameType,
 }: {
   phase: GamePhase;
   hud: HudSnapshot;
   onPrimary: () => void;
   onPickUpgrade: (id: UpgradeId) => void;
   onSetAimMode: (mode: AimMode) => void;
+  onSubmitName: () => void;
+  onNameCycle: (d: number) => void;
+  onNameCursor: (d: number) => void;
+  onNameType: (ch: string) => void;
 }) {
   if (phase === "title") {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <div className="space-y-2">
           <p className="text-[11px] font-medium tracking-[0.22em] text-accent uppercase">
             Armor Division
@@ -495,8 +711,8 @@ function MenuContent({
             Tankz
           </h1>
           <p className="max-w-sm text-sm leading-relaxed text-muted">
-            Drive the hull and aim the gun separately. Clear waves, then kit
-            out your tank — including rocket pods and seeker missiles.
+            Drive the hull and aim the gun separately. Clear waves, kit out
+            your tank, and claim a spot on the hall of fame.
           </p>
         </div>
         <AimModeToggle mode={hud.aimMode} onChange={onSetAimMode} />
@@ -508,6 +724,14 @@ function MenuContent({
           <Hint k="Tab" v="Auto-target" />
           <Hint k="M" v="Toggle aim mode" />
         </div>
+        {hud.leaderboard.length > 0 && (
+          <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">
+            <p className="mb-2 text-center text-[10px] font-medium tracking-[0.18em] text-muted uppercase">
+              Hall of Fame
+            </p>
+            <Leaderboard entries={hud.leaderboard.slice(0, 5)} compact />
+          </div>
+        )}
         <button
           type="button"
           onClick={onPrimary}
@@ -515,15 +739,19 @@ function MenuContent({
         >
           Deploy
         </button>
-        {hud.highScore > 0 && (
-          <p className="text-center text-xs text-muted">
-            High score{" "}
-            <span className="font-mono tabular-nums text-fg">
-              {hud.highScore.toLocaleString()}
-            </span>
-          </p>
-        )}
       </div>
+    );
+  }
+
+  if (phase === "enterName") {
+    return (
+      <NameEntry
+        hud={hud}
+        onSubmit={onSubmitName}
+        onCycle={onNameCycle}
+        onCursor={onNameCursor}
+        onType={onNameType}
+      />
     );
   }
 
@@ -605,14 +833,33 @@ function MenuContent({
 
   if (phase === "victory") {
     return (
-      <div className="space-y-5 text-center">
-        <p className="text-[11px] font-medium tracking-[0.18em] text-accent uppercase">
-          Victory
-        </p>
-        <h2 className="text-2xl font-semibold tracking-tight">Sector Cleared</h2>
-        <p className="font-mono text-sm tabular-nums text-muted">
-          Final score {hud.score.toLocaleString()}
-        </p>
+      <div className="space-y-5">
+        <div className="space-y-1 text-center">
+          <p className="text-[11px] font-medium tracking-[0.18em] text-accent uppercase">
+            Victory
+          </p>
+          <h2 className="text-2xl font-semibold tracking-tight">
+            Sector Cleared
+          </h2>
+          <p className="font-mono text-sm tabular-nums text-muted">
+            Final score {hud.score.toLocaleString()}
+          </p>
+        </div>
+        {hud.leaderboard.length > 0 && (
+          <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">
+            <p className="mb-2 text-center text-[10px] font-medium tracking-[0.18em] text-muted uppercase">
+              Hall of Fame
+            </p>
+            <Leaderboard
+              entries={hud.leaderboard}
+              highlight={
+                hud.nameRank
+                  ? { name: hud.nameDraft, score: hud.score }
+                  : null
+              }
+            />
+          </div>
+        )}
         <button
           type="button"
           onClick={onPrimary}
@@ -624,15 +871,33 @@ function MenuContent({
     );
   }
 
+  // gameover
   return (
-    <div className="space-y-5 text-center">
-      <p className="text-[11px] font-medium tracking-[0.18em] text-danger uppercase">
-        Destroyed
-      </p>
-      <h2 className="text-2xl font-semibold tracking-tight">Mission Failed</h2>
-      <p className="font-mono text-sm tabular-nums text-muted">
-        Score {hud.score.toLocaleString()}
-      </p>
+    <div className="space-y-5">
+      <div className="space-y-1 text-center">
+        <p className="text-[11px] font-medium tracking-[0.18em] text-danger uppercase">
+          Destroyed
+        </p>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          Mission Failed
+        </h2>
+        <p className="font-mono text-sm tabular-nums text-muted">
+          Score {hud.score.toLocaleString()}
+        </p>
+      </div>
+      {hud.leaderboard.length > 0 && (
+        <div className="rounded-lg border border-border/70 bg-surface-2/60 p-3">
+          <p className="mb-2 text-center text-[10px] font-medium tracking-[0.18em] text-muted uppercase">
+            Hall of Fame
+          </p>
+          <Leaderboard
+            entries={hud.leaderboard}
+            highlight={
+              hud.nameRank ? { name: hud.nameDraft, score: hud.score } : null
+            }
+          />
+        </div>
+      )}
       <button
         type="button"
         onClick={onPrimary}

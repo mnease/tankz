@@ -15,6 +15,7 @@ export type GamePhase =
   | "paused"
   | "waveClear"
   | "upgrade"
+  | "enterName"
   | "gameover"
   | "victory";
 
@@ -40,6 +41,13 @@ export interface UpgradeChoice {
 
 export type AimMode = "keys" | "mouse";
 
+export interface ScoreEntry {
+  name: string;
+  score: number;
+  wave: number;
+  at: number;
+}
+
 export interface HudSnapshot {
   phase: GamePhase;
   score: number;
@@ -59,6 +67,12 @@ export interface HudSnapshot {
   missilesUnlocked: boolean;
   missileReady: boolean;
   missileCd: number;
+  leaderboard: ScoreEntry[];
+  /** Arcade name entry draft (3–8 chars) */
+  nameDraft: string;
+  nameCursor: number;
+  nameRank: number | null;
+  pendingOutcome: "gameover" | "victory" | null;
 }
 
 export type ControlsProbe = {
@@ -89,6 +103,13 @@ declare global {
       setAimMode?: (mode: AimMode) => void;
       toggleAimMode?: () => void;
       toggleAutoTarget?: () => void;
+      submitName?: () => void;
+      setNameDraft?: (name: string) => void;
+      nameCursorMove?: (d: number) => void;
+      nameCycle?: (d: number) => void;
+      nameType?: (ch: string) => void;
+      forceEndRun?: (outcome: "gameover" | "victory") => void;
+      setScore?: (n: number) => void;
     };
   }
 }
@@ -118,6 +139,8 @@ interface Tank {
   aiSteer: number;
   aiThrottle: number;
   aiWantFire: boolean;
+  /** Desired hull heading for AI (radians) */
+  aiHeading: number;
   track: number;
   maxMove?: number;
 }
@@ -173,7 +196,12 @@ const MAX_PARTICLES = 220;
 const MAX_EXPLOSIONS = 16;
 const MAX_ENEMIES = 10;
 const HS_KEY = "tankz-highscore-v1";
+const LB_KEY = "tankz-leaderboard-v1";
 const AIM_KEY = "tankz-aim-mode-v1";
+const NAME_MAX = 8;
+const NAME_MIN = 3;
+const LB_SIZE = 10;
+const NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789·";
 
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
@@ -199,6 +227,53 @@ function loadHighScore() {
 function saveHighScore(n: number) {
   try {
     localStorage.setItem(HS_KEY, String(n));
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadLeaderboard(): ScoreEntry[] {
+  try {
+    const raw = localStorage.getItem(LB_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as ScoreEntry[];
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter(
+            (e) =>
+              e &&
+              typeof e.score === "number" &&
+              typeof e.name === "string",
+          )
+          .map((e) => ({
+            name: String(e.name).toUpperCase().slice(0, NAME_MAX) || "AAA",
+            score: Math.max(0, Math.floor(e.score)),
+            wave: Math.max(0, Math.floor(e.wave || 0)),
+            at: e.at || Date.now(),
+          }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, LB_SIZE);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  // Migrate legacy single high score
+  const legacy = loadHighScore();
+  if (legacy > 0) {
+    const seed: ScoreEntry[] = [
+      { name: "ACE", score: legacy, wave: 0, at: Date.now() },
+    ];
+    saveLeaderboard(seed);
+    return seed;
+  }
+  return [];
+}
+
+function saveLeaderboard(entries: ScoreEntry[]) {
+  try {
+    localStorage.setItem(LB_KEY, JSON.stringify(entries.slice(0, LB_SIZE)));
+    if (entries[0]) saveHighScore(entries[0].score);
   } catch {
     /* ignore */
   }
@@ -232,12 +307,19 @@ export class TankzEngine {
   phase: GamePhase = "title";
   score = 0;
   highScore = 0;
+  leaderboard: ScoreEntry[] = [];
   lives = 3;
   wave = 0;
   levelIndex = 0;
   levelName = "";
   message: string | null = null;
   messageT = 0;
+
+  /** Arcade name entry */
+  nameDraft = "AAA";
+  nameCursor = 0;
+  nameRank: number | null = null;
+  pendingOutcome: "gameover" | "victory" | null = null;
 
   tiles: TileChar[][] = [];
   brickHp: number[][] = [];
@@ -339,6 +421,10 @@ export class TankzEngine {
     if (!ctx) throw new Error("2d context unavailable");
     this.ctx = ctx;
     this.highScore = loadHighScore();
+    this.leaderboard = loadLeaderboard();
+    if (this.leaderboard[0]) {
+      this.highScore = Math.max(this.highScore, this.leaderboard[0].score);
+    }
     this.aimMode = loadAimMode();
 
     for (let i = 0; i < MAX_BULLETS; i++) {
@@ -378,6 +464,11 @@ export class TankzEngine {
     this.player = this.makeTank("player", 0, 0, 0);
 
     this.boundKeyDown = (e) => {
+      // Arcade name entry — classic letter entry
+      if (this.phase === "enterName") {
+        this.handleNameKey(e);
+        return;
+      }
       if (
         [
           "ArrowUp",
@@ -517,7 +608,18 @@ export class TankzEngine {
       },
       getAimMode: () => this.aimMode,
       setAimMode: (mode: AimMode) => this.setAimMode(mode),
+      toggleAimMode: () => this.toggleAimMode(),
       toggleAutoTarget: () => this.toggleAutoTarget(),
+      submitName: () => this.submitName(),
+      setNameDraft: (name) => this.setNameDraft(name),
+      nameCursorMove: (d) => this.nameCursorMove(d),
+      nameCycle: (d) => this.nameCycle(d),
+      nameType: (ch) => this.nameType(ch),
+      forceEndRun: (outcome) => this.endRun(outcome),
+      setScore: (n: number) => {
+        this.score = Math.max(0, Math.floor(n));
+        if (this.score > this.highScore) this.highScore = this.score;
+      },
     };
   }
 
@@ -948,6 +1050,7 @@ export class TankzEngine {
       aiSteer: 0,
       aiThrottle: 0,
       aiWantFire: false,
+      aiHeading: angle,
       track: 0,
     };
   }
@@ -1040,13 +1143,21 @@ export class TankzEngine {
       }
     }
 
-    // Hull turn (vehicle): A = left = +yaw
+    // Hull turn — tracked vehicle: better pivot when slow, scrub speed when turning hard
     const hullTurnRate = this.run.hullTurn;
-    const speedFactor = 0.4 + 0.6 * Math.min(1, Math.abs(p.speed) / 130);
-    const reverse = p.speed >= 0 ? 1 : -1;
+    const maxSpeed = this.run.maxSpeed;
+    const speedRatio = Math.min(1, Math.abs(p.speed) / Math.max(40, maxSpeed));
+    // Rest/pivot ≈ full rate; high speed ≈ tighter radius (less turn)
+    const turnMul = 1.2 - 0.65 * speedRatio;
+    // Tracks yaw the same way regardless of forward/reverse (neutral steer feel)
     p.hullAngle = wrapAngle(
-      p.hullAngle + hullSteer * hullTurnRate * speedFactor * reverse * dt,
+      p.hullAngle + hullSteer * hullTurnRate * turnMul * dt,
     );
+
+    // Track scrub: hard turn bleeds speed
+    if (Math.abs(hullSteer) > 0.4 && Math.abs(p.speed) > 35) {
+      p.speed *= Math.exp(-1.35 * Math.abs(hullSteer) * dt);
+    }
 
     // Turret aim — auto-target overrides; else exclusive keys/mouse modes
     if (this.autoTarget) {
@@ -1083,17 +1194,22 @@ export class TankzEngine {
     }
 
     const accel = this.run.accel;
-    const maxSpeed = this.run.maxSpeed;
-    const friction = 4.2;
-    if (throttle !== 0) {
+    const friction = 3.6;
+    // Reverse is slower and weaker (realistic gearbox feel)
+    const reverseMax = maxSpeed * 0.42;
+    if (throttle > 0) {
       p.speed += throttle * accel * dt;
+    } else if (throttle < 0) {
+      p.speed += throttle * accel * 0.62 * dt;
     } else {
+      // Engine braking + drag
       p.speed *= Math.exp(-friction * dt);
-      if (Math.abs(p.speed) < 4) p.speed = 0;
+      if (Math.abs(p.speed) < 5) p.speed = 0;
     }
-    p.speed = clamp(p.speed, -maxSpeed * 0.55, maxSpeed);
+    p.speed = clamp(p.speed, -reverseMax, maxSpeed);
 
     this.moveTank(p, dt);
+    this.spawnTrackDust(p, hullSteer, dt);
 
     const wantFire =
       this.keys.has("Space") ||
@@ -1150,9 +1266,182 @@ export class TankzEngine {
     } else {
       this.autoTargetId = null;
       this.acquireAutoTarget();
-      this.message = this.autoTargetId != null ? "Auto-Target ON" : "Auto-Target — no hostiles";
+      this.message =
+        this.autoTargetId != null
+          ? "Auto-Target ON"
+          : "Auto-Target — no hostiles";
     }
     this.messageT = 1.3;
+  }
+
+  // ─── Arcade high scores ───────────────────────────────
+
+  private qualifiesForBoard(score: number): boolean {
+    if (score <= 0) return false;
+    if (this.leaderboard.length < LB_SIZE) return true;
+    const last = this.leaderboard[this.leaderboard.length - 1];
+    return score > (last?.score ?? 0);
+  }
+
+  private predictedRank(score: number): number {
+    let rank = 1;
+    for (const e of this.leaderboard) {
+      if (score > e.score) break;
+      rank += 1;
+    }
+    return rank;
+  }
+
+  private endRun(outcome: "gameover" | "victory") {
+    this.pendingOutcome = outcome;
+    if (this.score > this.highScore) this.highScore = this.score;
+    this.message =
+      outcome === "victory" ? "Sector Cleared" : "Mission Failed";
+    this.messageT = 99;
+    if (this.qualifiesForBoard(this.score)) {
+      this.phase = "enterName";
+      this.nameDraft = "AAA";
+      this.nameCursor = 0;
+      this.nameRank = this.predictedRank(this.score);
+      sfx.win();
+    } else {
+      this.phase = outcome;
+      if (outcome === "victory") sfx.win();
+    }
+  }
+
+  private handleNameKey(e: KeyboardEvent) {
+    e.preventDefault();
+    if (e.code === "ArrowLeft") {
+      this.nameCursorMove(-1);
+      return;
+    }
+    if (e.code === "ArrowRight") {
+      this.nameCursorMove(1);
+      return;
+    }
+    if (e.code === "ArrowUp") {
+      this.nameCycle(1);
+      return;
+    }
+    if (e.code === "ArrowDown") {
+      this.nameCycle(-1);
+      return;
+    }
+    if (e.code === "Backspace") {
+      this.nameBackspace();
+      return;
+    }
+    if (e.code === "Enter") {
+      this.submitName();
+      return;
+    }
+    if (e.code.startsWith("Key") && e.code.length === 4) {
+      this.nameType(e.code.slice(3));
+      return;
+    }
+    if (e.code.startsWith("Digit") && e.code.length === 6) {
+      this.nameType(e.code.slice(5));
+      return;
+    }
+    if (e.code.startsWith("Numpad") && e.code.length === 7) {
+      const d = e.code.slice(6);
+      if (/^\d$/.test(d)) this.nameType(d);
+    }
+  }
+
+  nameCursorMove(delta: number) {
+    if (this.phase !== "enterName") return;
+    let draft = this.nameDraft.padEnd(NAME_MIN, "A").slice(0, NAME_MAX);
+    if (delta > 0 && this.nameCursor >= draft.length - 1 && draft.length < NAME_MAX) {
+      draft = (draft + "A").slice(0, NAME_MAX);
+      this.nameDraft = draft;
+      this.nameCursor = draft.length - 1;
+      return;
+    }
+    this.nameCursor = clamp(this.nameCursor + delta, 0, draft.length - 1);
+  }
+
+  nameCycle(dir: number) {
+    if (this.phase !== "enterName") return;
+    const chars = this.nameDraft.padEnd(NAME_MIN, "A").slice(0, NAME_MAX).split("");
+    while (chars.length < NAME_MIN) chars.push("A");
+    const i = clamp(this.nameCursor, 0, chars.length - 1);
+    const ch = chars[i] ?? "A";
+    let idx = NAME_CHARS.indexOf(ch);
+    if (idx < 0) idx = 0;
+    idx = (idx + dir + NAME_CHARS.length) % NAME_CHARS.length;
+    chars[i] = NAME_CHARS[idx]!;
+    this.nameDraft = chars.join("");
+  }
+
+  nameType(ch: string) {
+    if (this.phase !== "enterName") return;
+    const c = ch.toUpperCase();
+    if (!/^[A-Z0-9]$/.test(c)) return;
+    const chars = this.nameDraft.padEnd(NAME_MIN, "A").slice(0, NAME_MAX).split("");
+    while (chars.length < NAME_MIN) chars.push("A");
+    const i = clamp(this.nameCursor, 0, chars.length - 1);
+    chars[i] = c;
+    this.nameDraft = chars.join("");
+    // Advance within current name; don't auto-extend (→ adds slots)
+    if (this.nameCursor < this.nameDraft.length - 1) {
+      this.nameCursor += 1;
+    }
+  }
+
+  nameBackspace() {
+    if (this.phase !== "enterName") return;
+    if (this.nameDraft.length > NAME_MIN) {
+      this.nameDraft = this.nameDraft.slice(0, -1);
+      this.nameCursor = Math.max(0, this.nameDraft.length - 1);
+    } else {
+      const chars = this.nameDraft.padEnd(NAME_MIN, "A").split("");
+      chars[clamp(this.nameCursor, 0, chars.length - 1)] = "A";
+      this.nameDraft = chars.join("");
+    }
+  }
+
+  setNameDraft(name: string) {
+    if (this.phase !== "enterName") return;
+    const cleaned = name
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, NAME_MAX);
+    this.nameDraft = (cleaned || "AAA").padEnd(NAME_MIN, "A").slice(0, NAME_MAX);
+    this.nameCursor = clamp(this.nameCursor, 0, this.nameDraft.length - 1);
+  }
+
+  submitName() {
+    if (this.phase !== "enterName") return;
+    let name = this.nameDraft
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, NAME_MAX);
+    if (name.length < NAME_MIN) name = name.padEnd(NAME_MIN, "A");
+    if (!name) name = "AAA";
+
+    const entry: ScoreEntry = {
+      name,
+      score: this.score,
+      wave: this.wave,
+      at: Date.now(),
+    };
+    const next = [...this.leaderboard, entry]
+      .sort((a, b) => b.score - a.score || a.at - b.at)
+      .slice(0, LB_SIZE);
+    this.leaderboard = next;
+    saveLeaderboard(next);
+    this.highScore = next[0]?.score ?? this.score;
+    this.nameRank =
+      next.findIndex(
+        (e) => e.name === entry.name && e.score === entry.score && e.at === entry.at,
+      ) + 1;
+    this.phase = this.pendingOutcome ?? "gameover";
+    this.message =
+      this.phase === "victory" ? "Sector Cleared" : "Mission Failed";
+    this.messageT = 99;
+    sfx.pickup();
   }
 
   private acquireAutoTarget() {
@@ -1288,44 +1577,97 @@ export class TankzEngine {
       if (e.invuln > 0) e.invuln -= dt;
       if (e.fireCd > 0) e.fireCd -= dt;
 
+      const dx = this.player.x - e.x;
+      const dy = this.player.y - e.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const maxMove = e.maxMove ?? 100;
+
+      // ── Independent turret: track player with slight lead ──
+      const pf = forwardFromAngle(this.player.hullAngle);
+      const leadT = Math.min(0.45, dist / Math.max(120, e.bulletSpeed)) * 0.55;
+      const aimX = this.player.x + pf.x * this.player.speed * leadT;
+      const aimY = this.player.y + pf.y * this.player.speed * leadT;
+      const desiredTurret = Math.atan2(-(aimX - e.x), -(aimY - e.y));
+      const daTurret = wrapAngle(desiredTurret - e.turretAngle);
+      // Turret slews independently of hull (slower than player mouse, still readable)
+      const turretRate = 2.0 + Math.min(1.2, this.wave * 0.08);
+      e.turretAngle = wrapAngle(
+        e.turretAngle + clamp(daTurret, -turretRate * dt, turretRate * dt),
+      );
+
+      // ── Hull AI: replan desired heading / throttle periodically ──
       e.aiTimer -= dt;
       if (e.aiTimer <= 0) {
-        e.aiTimer = 0.35 + Math.random() * 0.55;
-        const dx = this.player.x - e.x;
-        const dy = this.player.y - e.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        const desired = Math.atan2(-dx, -dy);
-        let daTurret = wrapAngle(desired - e.turretAngle);
-        if (Math.random() < 0.18) daTurret += (Math.random() - 0.5) * 0.8;
-        e.aiSteer = clamp(daTurret * 1.8, -1, 1);
-        e.aiThrottle = dist > 220 ? 1 : dist < 90 ? -0.3 : 0.55;
-        e.aiWantFire = Math.abs(daTurret) < 0.4 && dist < 480;
+        e.aiTimer = 0.4 + Math.random() * 0.55;
+        // Approach, hold, or reverse — classic armor tactics
+        let heading = Math.atan2(-dx, -dy);
+        // Occasional flank / circle
+        if (dist > 120 && dist < 360 && Math.random() < 0.35) {
+          heading += (Math.random() > 0.5 ? 1 : -1) * (0.7 + Math.random() * 0.6);
+        }
+        // Separation from other tanks
         for (const o of this.enemies) {
           if (o === e || !o.alive) continue;
           const sx = e.x - o.x;
           const sy = e.y - o.y;
           const sd = Math.hypot(sx, sy);
-          if (sd < 50 && sd > 0.1) {
-            const sepAng = Math.atan2(-sx, -sy);
-            e.aiSteer +=
-              clamp(wrapAngle(sepAng - e.turretAngle), -0.5, 0.5) * 0.3;
+          if (sd < 56 && sd > 0.1) {
+            const sep = Math.atan2(-sx, -sy);
+            heading = wrapAngle(heading + wrapAngle(sep - heading) * 0.45);
           }
         }
+        e.aiHeading = heading;
+
+        if (dist > 260) e.aiThrottle = 0.95;
+        else if (dist > 150) e.aiThrottle = 0.55;
+        else if (dist < 85) e.aiThrottle = -0.55;
+        else e.aiThrottle = 0.15 + Math.random() * 0.25;
+
+        // Only fire when gun is roughly on target and in range
+        e.aiWantFire =
+          Math.abs(daTurret) < 0.28 && dist < 500 && dist > 40;
       }
 
-      e.turretAngle = wrapAngle(e.turretAngle + e.aiSteer * 2.4 * dt);
-
-      if (Math.abs(e.aiThrottle) > 0.1) {
-        const da = wrapAngle(e.turretAngle - e.hullAngle);
-        e.hullAngle = wrapAngle(
-          e.hullAngle + clamp(da, -2.0 * dt, 2.0 * dt),
-        );
+      // Re-evaluate fire continuously (gun tracks every frame)
+      if (Math.abs(daTurret) < 0.22 && dist < 480 && dist > 36) {
+        e.aiWantFire = true;
+      } else if (Math.abs(daTurret) > 0.55) {
+        e.aiWantFire = false;
       }
 
-      const maxMove = e.maxMove ?? 100;
-      const targetSpeed = e.aiThrottle * maxMove;
-      e.speed += (targetSpeed - e.speed) * (1 - Math.exp(-4 * dt));
+      // ── Hull turn toward planned heading (independent of turret) ──
+      const daHull = wrapAngle(e.aiHeading - e.hullAngle);
+      const speedRatio = Math.min(1, Math.abs(e.speed) / Math.max(40, maxMove));
+      const hullTurnRate = 2.05 * (1.15 - 0.55 * speedRatio);
+      // Prefer pivot when badly misaligned — don't drive full tilt sideways
+      const face = Math.cos(daHull);
+      e.hullAngle = wrapAngle(
+        e.hullAngle + clamp(daHull, -hullTurnRate * dt, hullTurnRate * dt),
+      );
+
+      // Drive only when hull roughly faces desired path
+      let throttle = e.aiThrottle;
+      if (face < 0.25) {
+        // Pivot in place first
+        throttle = Math.abs(throttle) > 0.3 ? Math.sign(throttle) * 0.12 : 0;
+      } else if (face < 0.65) {
+        throttle *= 0.45 + 0.55 * face;
+      }
+
+      // Track scrub when turning hard
+      if (Math.abs(daHull) > 0.4 && Math.abs(e.speed) > 30) {
+        e.speed *= Math.exp(-1.1 * dt);
+      }
+
+      // Smooth accel / reverse limits
+      const targetSpeed = throttle * maxMove;
+      const reverseCap = maxMove * 0.4;
+      const accelRate = throttle >= 0 ? 3.2 : 2.4;
+      e.speed += (targetSpeed - e.speed) * (1 - Math.exp(-accelRate * dt));
+      e.speed = clamp(e.speed, -reverseCap, maxMove);
+
       this.moveTank(e, dt);
+      this.spawnTrackDust(e, Math.sign(daHull) * Math.min(1, Math.abs(daHull)), dt);
       e.track += Math.abs(e.speed) * dt * 0.04;
 
       if (e.aiWantFire) this.tryFire(e);
@@ -1341,30 +1683,58 @@ export class TankzEngine {
 
   private moveTank(t: Tank, dt: number) {
     const { x: fx, y: fy } = forwardFromAngle(t.hullAngle);
+    // Tracks only push along hull forward — no lateral skate
     let nx = t.x + fx * t.speed * dt;
     let ny = t.y + fy * t.speed * dt;
 
+    let hitX = false;
+    let hitY = false;
     if (!this.collidesSolid(nx, t.y, t.radius)) {
       t.x = nx;
     } else {
-      t.speed *= 0.4;
-      if (t.team === "enemy") {
-        t.aiTimer = 0;
-        t.aiSteer = Math.random() > 0.5 ? 1 : -1;
-      }
+      hitX = true;
+      t.speed *= 0.35;
     }
     if (!this.collidesSolid(t.x, ny, t.radius)) {
       t.y = ny;
     } else {
-      t.speed *= 0.4;
-      if (t.team === "enemy") {
-        t.aiTimer = 0;
-        t.aiSteer = Math.random() > 0.5 ? 1 : -1;
-      }
+      hitY = true;
+      t.speed *= 0.35;
+    }
+
+    if ((hitX || hitY) && t.team === "enemy") {
+      // Bounce plan: reverse and reorient hull away from wall
+      t.aiTimer = 0.15 + Math.random() * 0.25;
+      t.aiThrottle = -0.75;
+      t.aiHeading = wrapAngle(
+        t.hullAngle + (Math.random() > 0.5 ? 1.1 : -1.1) + (Math.random() - 0.5) * 0.4,
+      );
+      t.aiSteer = Math.random() > 0.5 ? 1 : -1;
     }
 
     t.x = clamp(t.x, t.radius, WORLD_COLS * TILE - t.radius);
     t.y = clamp(t.y, t.radius, WORLD_ROWS * TILE - t.radius);
+  }
+
+  /** Light dust / track grit when moving or pivoting */
+  private spawnTrackDust(t: Tank, steer: number, dt: number) {
+    const moving = Math.abs(t.speed) > 18 || Math.abs(steer) > 0.35;
+    if (!moving) return;
+    if (Math.random() > 0.35 + Math.min(0.4, Math.abs(t.speed) / 200)) return;
+    const { x: fx, y: fy } = forwardFromAngle(t.hullAngle);
+    // Left/right track offsets
+    const side = Math.random() > 0.5 ? 1 : -1;
+    const ox = -fy * 11 * side - fx * 6;
+    const oy = fx * 11 * side - fy * 6;
+    this.spawnParticle(
+      t.x + ox,
+      t.y + oy,
+      -fx * t.speed * 0.08 + (Math.random() - 0.5) * 25,
+      -fy * t.speed * 0.08 + (Math.random() - 0.5) * 25,
+      0.2 + Math.random() * 0.15,
+      1.5 + Math.random() * 2,
+      Math.random() > 0.5 ? "#5a5248" : "#3d3830",
+    );
   }
 
   private collidesSolid(x: number, y: number, r: number) {
@@ -1722,19 +2092,12 @@ export class TankzEngine {
         if (Math.random() < 0.22) this.spawnPickup(t.x, t.y);
         if (this.score > this.highScore) {
           this.highScore = this.score;
-          saveHighScore(this.highScore);
         }
       } else {
         this.lives -= 1;
         sfx.hurt();
         if (this.lives <= 0) {
-          this.phase = "gameover";
-          this.message = "Mission Failed";
-          this.messageT = 99;
-          if (this.score > this.highScore) {
-            this.highScore = this.score;
-            saveHighScore(this.highScore);
-          }
+          this.endRun("gameover");
         } else {
           const def = getLevel(this.levelIndex);
           const parsed = parseLevel(def);
@@ -1889,14 +2252,9 @@ export class TankzEngine {
     if (this.enemies.some((e) => e.alive)) return;
     if (this.phase !== "playing") return;
     if (this.wave >= 8) {
-      this.phase = "victory";
-      this.message = "Sector Cleared";
-      this.messageT = 99;
+      this.score += 50 * this.wave;
       sfx.win();
-      if (this.score > this.highScore) {
-        this.highScore = this.score;
-        saveHighScore(this.highScore);
-      }
+      this.endRun("victory");
       return;
     }
     this.score += 50 * this.wave;
@@ -1939,6 +2297,11 @@ export class TankzEngine {
       missilesUnlocked: this.run.missiles,
       missileReady: this.run.missiles && this.missileFireCd <= 0,
       missileCd: this.missileFireCd,
+      leaderboard: this.leaderboard.slice(),
+      nameDraft: this.nameDraft,
+      nameCursor: this.nameCursor,
+      nameRank: this.nameRank,
+      pendingOutcome: this.pendingOutcome,
     };
   }
 
