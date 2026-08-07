@@ -1,4 +1,5 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { Analytics } from "@vercel/analytics/react";
 import { AuthProvider } from "@/lib/auth/provider";
 import { CreatedWithGrokBanner } from "@/components/created-with-grok-banner";
 import { GAME_VERSION } from "@/game/version";
@@ -60,6 +61,8 @@ export const Route = createRootRoute({
         <AuthProvider>
           <Outlet />
         </AuthProvider>
+        {/* Vercel Web Analytics — dashboard must be enabled on the project */}
+        <Analytics />
         <Scripts />
       </body>
     </html>

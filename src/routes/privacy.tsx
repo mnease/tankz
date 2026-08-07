@@ -16,7 +16,7 @@ export const Route = createFileRoute("/privacy")({
 });
 
 function PrivacyPage() {
-  const updated = "August 6, 2026";
+  const updated = "August 7, 2026";
   return (
     <main className="min-h-[calc(100dvh-var(--grok-banner-h,0px))] bg-bg px-4 py-10 text-fg">
       <article className="mx-auto max-w-2xl space-y-6">
@@ -87,6 +87,15 @@ function PrivacyPage() {
               automatically process standard server logs such as IP address,
               user agent, timestamps, and request metadata for security,
               reliability, and abuse prevention.
+            </li>
+            <li>
+              <strong className="font-medium text-fg">
+                Privacy-friendly web analytics.
+              </strong>{" "}
+              We use Vercel Web Analytics to understand aggregate traffic (for
+              example page views and referrers). It is designed to work without
+              cookies for visitor tracking and is not used to sell personal data
+              or build advertising profiles.
             </li>
             <li>
               <strong className="font-medium text-fg">Tips.</strong> Optional
