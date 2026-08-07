@@ -1,6 +1,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
 import { CreatedWithGrokBanner } from "@/components/created-with-grok-banner";
+import { GAME_VERSION } from "@/game/version";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Tankz";
@@ -13,8 +14,8 @@ const SITE_ORIGIN =
     : undefined) ??
   (import.meta.env.VITE_SITE_URL as string | undefined) ??
   "https://tankz-rho.vercel.app";
-/** Static 1200×630 share card in /public/og.png */
-const OG_IMAGE = `${SITE_ORIGIN}/og.png`;
+/** Static 1200×630 share card — version query busts CDN / social crawler cache */
+const OG_IMAGE = `${SITE_ORIGIN}/og.png?v=${GAME_VERSION}`;
 
 export const Route = createRootRoute({
   head: () => ({
