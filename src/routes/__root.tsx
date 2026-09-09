@@ -28,6 +28,7 @@ export const Route = createRootRoute({
           "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover",
       },
       { title: APP_NAME },
+      { name: "robots", content: "noindex, nofollow" },
       { name: "description", content: APP_DESCRIPTION },
       { property: "og:type", content: "website" },
       { property: "og:site_name", content: APP_NAME },
