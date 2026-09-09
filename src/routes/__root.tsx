@@ -17,8 +17,13 @@ const SITE_ORIGIN =
   "https://tankz-rho.vercel.app";
 /** Static 1200×630 share card — version query busts CDN / social crawler cache */
 const OG_IMAGE = `${SITE_ORIGIN}/og.png?v=${GAME_VERSION}`;
+/** Exact robots token for meta + X-Robots-Tag (preview-only; no custom domain). */
+const ROBOTS_TAG = "noindex, nofollow";
 
 export const Route = createRootRoute({
+  headers: () => ({
+    "X-Robots-Tag": ROBOTS_TAG,
+  }),
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -28,7 +33,7 @@ export const Route = createRootRoute({
           "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover",
       },
       { title: APP_NAME },
-      { name: "robots", content: "noindex, nofollow" },
+      { name: "robots", content: ROBOTS_TAG },
       { name: "description", content: APP_DESCRIPTION },
       { property: "og:type", content: "website" },
       { property: "og:site_name", content: APP_NAME },
